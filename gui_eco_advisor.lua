@@ -385,6 +385,14 @@ end
 -- collectSnapshot()
 -- Queries the Spring API and returns a Snapshot table representing the
 -- current economic state of the player's team.
+--
+-- Resource layout from Spring.GetTeamResources(teamID, resource):
+--   [1] current, [2] income, [3] expense, [4] storage
+--   (storage is the cap, not pull)
+--
+-- Wind layout from Spring.GetWind():
+--   [1] x-component, [2] y-component, [3] z-component, [4] speed (magnitude)
+--   Use select(4, spGetWind()) to get speed directly.
 --------------------------------------------------------------------------------
 collectSnapshot = function()
   local gameFrame = spGetGameFrame()
@@ -395,8 +403,8 @@ collectSnapshot = function()
   local energyCurrent, energyIncome, energyExpense, energyStorage =
     spGetTeamResources(myTeamID, "energy")
 
-  -- Wind
-  local _, _, _, windSpeed = spGetWind()
+  -- Wind — use select(4, ...) to get speed (magnitude) directly
+  local windSpeed = select(4, spGetWind())
   local windMin     = Game.windMin
   local windMax     = Game.windMax
   local windAverage = windFns.getAverageWind()
