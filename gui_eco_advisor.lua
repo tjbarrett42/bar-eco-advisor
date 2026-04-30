@@ -73,6 +73,16 @@ local CONFIG = {
 
 --------------------------------------------------------------------------------
 -- StateAccumulator — circular buffer with derived metrics
+--
+-- Stores up to maxSize snapshots in a circular buffer (head advances modulo
+-- maxSize). After each push, computeDerived() recalculates all trend,
+-- stall-ETA, ratio, and flag fields into self.derived.
+--
+-- Usage:
+--   local acc = StateAccumulator:new(CONFIG.bufferSize)
+--   acc:push(snapshot)
+--   local d = acc.derived    -- derived metrics always up to date
+--   local s = acc:latest()   -- most recent raw snapshot
 --------------------------------------------------------------------------------
 local StateAccumulator = {}
 StateAccumulator.__index = StateAccumulator
