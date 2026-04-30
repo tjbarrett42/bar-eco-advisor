@@ -1,12 +1,7 @@
---------------------------------------------------------------------------------
--- gui_eco_advisor.lua
--- BAR Eco Advisor widget — real-time economic recommendations overlay
---------------------------------------------------------------------------------
-
 function widget:GetInfo()
   return {
     name      = "Eco Advisor",
-    desc      = "Real-time economic recommendations for Beyond All Reason",
+    desc      = "Live eco suggestions and dynamic blueprints",
     author    = "Tim",
     version   = "0.1",
     layer     = 0,
@@ -15,96 +10,79 @@ function widget:GetInfo()
 end
 
 --------------------------------------------------------------------------------
--- Localized Spring API
+-- Localize Spring API
 --------------------------------------------------------------------------------
-local spGetMyTeamID           = Spring.GetMyTeamID
-local spGetTeamResources      = Spring.GetTeamResources
-local spGetTeamRulesParam     = Spring.GetTeamRulesParam
-local spGetTeamUnits          = Spring.GetTeamUnits
-local spGetUnitDefID          = Spring.GetUnitDefID
-local spGetUnitCommands       = Spring.GetUnitCommands
-local spGetFactoryCommands    = Spring.GetFactoryCommands
-local spGetGameFrame          = Spring.GetGameFrame
-local spGetWind               = Spring.GetWind
-local spGetGroundHeight       = Spring.GetGroundHeight
-local spTestBuildOrder        = Spring.TestBuildOrder
+local spGetMyTeamID         = Spring.GetMyTeamID
+local spGetTeamResources    = Spring.GetTeamResources
+local spGetTeamRulesParam   = Spring.GetTeamRulesParam
+local spGetTeamUnits        = Spring.GetTeamUnits
+local spGetUnitDefID        = Spring.GetUnitDefID
+local spGetUnitCommands     = Spring.GetUnitCommands
+local spGetFactoryCommands  = Spring.GetFactoryCommands
+local spGetGameFrame        = Spring.GetGameFrame
+local spGetWind             = Spring.GetWind
+local spGetGroundHeight     = Spring.GetGroundHeight
+local spTestBuildOrder      = Spring.TestBuildOrder
 local spGiveOrderArrayToUnitArray = Spring.GiveOrderArrayToUnitArray
-local spEcho                  = Spring.Echo
+local spEcho                = Spring.Echo
+
+local mathFloor = math.floor
+local mathMin   = math.min
+local mathMax   = math.max
+local mathAbs   = math.abs
+local strFormat = string.format
+local strSub    = string.sub
 
 --------------------------------------------------------------------------------
--- Localized standard library
---------------------------------------------------------------------------------
-local mathFloor  = math.floor
-local mathMin    = math.min
-local mathMax    = math.max
-local mathAbs    = math.abs
-local strFormat  = string.format
-local strSub     = string.sub
-
---------------------------------------------------------------------------------
--- CONFIG
+-- Configuration
 --------------------------------------------------------------------------------
 local CONFIG = {
-  -- Snapshot / accumulator
-  sampleInterval      = 30,   -- game frames between snapshots (30 = ~1s at 30fps)
-  bufferSize          = 60,   -- number of snapshots to retain (~60s)
-  maxRecommendations  = 5,
+  sampleInterval     = 30,
+  bufferSize         = 60,
+  maxRecommendations = 5,
+  hudWidth           = 280,
 
-  -- HUD
-  hudWidth            = 280,
-
-  -- Phase thresholds (metal extractor counts)
-  phaseEarlyMaxMex    = 4,
-  phaseMidMaxMex      = 10,
+  -- Phase thresholds
+  openingMaxTime     = 90,
+  openingMaxMex      = 4,
+  earlyMaxTime       = 240,
+  lateMinMetal       = 30,
 
   -- Rules thresholds
-  metalStallThreshold     = 50,   -- metal below this = stall
-  energyStallThreshold    = 100,  -- energy below this = stall
-  energySurplusThreshold  = 500,  -- energy above this = healthy surplus
-  metalIncomeMinEarly     = 3,    -- m/s expected early
-  buildPowerMinRatio      = 0.4,  -- buildPower / metalIncome ratio minimum
-  windConverterRatio      = 0.5,  -- wind turbines / energy converters minimum ratio
-  idleConstructorFraction = 0.3,  -- fraction of constructors idle before warning
+  stallWarnSeconds   = 15,
+  bpPerMetalLow      = 40,
+  bpPerMetalHigh     = 80,
+  windViableThreshold = 7,
+  windToConverterMax  = 8,
+  energyExcessRatio   = 1.5,
+  t2ReadyMetal        = 15,
+  t2ReadyEnergy       = 200,
 
   -- Trend detection
-  trendWindowFrames   = 150,  -- frames to compare for trend (5s at 30fps)
-  trendMinDelta       = 0.5,  -- minimum delta to flag as trending
+  trendWindowSeconds  = 10,
+  trendChangePercent  = 0.05,
 }
 
 --------------------------------------------------------------------------------
--- StateAccumulator — circular buffer with derived metrics
---
--- Stores up to maxSize snapshots in a circular buffer (head advances modulo
--- maxSize). After each push, computeDerived() recalculates all trend,
--- stall-ETA, ratio, and flag fields into self.derived.
---
--- Usage:
---   local acc = StateAccumulator:new(CONFIG.bufferSize)
---   acc:push(snapshot)
---   local d = acc.derived    -- derived metrics always up to date
---   local s = acc:latest()   -- most recent raw snapshot
+-- State Accumulator
 --------------------------------------------------------------------------------
 local StateAccumulator = {}
 StateAccumulator.__index = StateAccumulator
 
 function StateAccumulator:new(maxSize)
-  local obj = {
-    maxSize  = maxSize,
-    buffer   = {},
-    head     = 0,   -- index of most recently inserted item (1-based, 0 = empty)
-    count    = 0,
-    derived  = {},
-  }
-  setmetatable(obj, self)
-  return obj
+  return setmetatable({
+    buffer  = {},
+    maxSize = maxSize or 60,
+    head    = 0,
+    count   = 0,
+    derived = {},
+  }, self)
 end
 
 function StateAccumulator:push(snapshot)
   self.head = (self.head % self.maxSize) + 1
   self.buffer[self.head] = snapshot
-  if self.count < self.maxSize then
-    self.count = self.count + 1
-  end
+  self.count = mathMin(self.count + 1, self.maxSize)
   self:computeDerived()
 end
 
@@ -113,11 +91,9 @@ function StateAccumulator:latest()
   return self.buffer[self.head]
 end
 
---- Returns last n snapshots, oldest first.
 function StateAccumulator:getRecent(n)
   n = mathMin(n, self.count)
   local result = {}
-  -- Walk backwards from head to collect n items, then reverse
   for i = 1, n do
     local idx = ((self.head - i) % self.maxSize) + 1
     result[n - i + 1] = self.buffer[idx]
@@ -125,487 +101,309 @@ function StateAccumulator:getRecent(n)
   return result
 end
 
---- Average of fieldFn(snapshot) over the most recent windowSeconds of data.
 function StateAccumulator:averageOverWindow(fieldFn, windowSeconds)
-  if self.count == 0 then return 0 end
-  local windowFrames = windowSeconds * 30  -- assumes 30fps
-  local latest = self:latest()
-  if not latest then return 0 end
-  local cutoffFrame = latest.gameFrame - windowFrames
-
-  local sum   = 0
-  local count = 0
-  for i = 1, self.count do
-    local idx      = ((self.head - i) % self.maxSize) + 1
-    local snapshot = self.buffer[idx]
-    if snapshot and snapshot.gameFrame >= cutoffFrame then
-      local val = fieldFn(snapshot)
-      if val then
-        sum   = sum + val
-        count = count + 1
-      end
-    else
-      break  -- buffer is time-ordered; stop once outside window
-    end
+  local samplesPerSecond = 30 / CONFIG.sampleInterval
+  local numSamples = mathMin(mathFloor(windowSeconds * samplesPerSecond), self.count)
+  if numSamples == 0 then return 0 end
+  local sum = 0
+  for i = 1, numSamples do
+    local idx = ((self.head - i) % self.maxSize) + 1
+    sum = sum + fieldFn(self.buffer[idx])
   end
-
-  if count == 0 then return 0 end
-  return sum / count
+  return sum / numSamples
 end
 
 function StateAccumulator:computeDerived()
-  local d  = self.derived
-  local s  = self:latest()
-  if not s then return end
+  local snap = self:latest()
+  if not snap then return end
 
-  -- -------------------------------------------------------------------------
-  -- Trends: compare current value vs value ~5s ago
-  -- -------------------------------------------------------------------------
-  local windowFrames = CONFIG.trendWindowFrames
-  local old = nil
-  for i = 1, self.count do
-    local idx = ((self.head - i) % self.maxSize) + 1
-    local snap = self.buffer[idx]
-    if snap and (s.gameFrame - snap.gameFrame) >= windowFrames then
-      old = snap
-      break
+  local d = self.derived
+  local w = CONFIG.trendWindowSeconds
+
+  local function computeTrend(fieldFn)
+    if self.count < 4 then return "stable" end
+    local halfW = w / 2
+    local recentAvg = self:averageOverWindow(fieldFn, halfW)
+    local samplesPerSecond = 30 / CONFIG.sampleInterval
+    local skipSamples = mathFloor(halfW * samplesPerSecond)
+    local priorCount = mathMin(mathFloor(halfW * samplesPerSecond), self.count - skipSamples)
+    if priorCount < 1 then return "stable" end
+    local sum = 0
+    for i = skipSamples + 1, skipSamples + priorCount do
+      local idx = ((self.head - i) % self.maxSize) + 1
+      sum = sum + fieldFn(self.buffer[idx])
     end
+    local priorAvg = sum / priorCount
+    if priorAvg == 0 then return "stable" end
+    local change = (recentAvg - priorAvg) / mathAbs(priorAvg)
+    if change > CONFIG.trendChangePercent then return "rising"
+    elseif change < -CONFIG.trendChangePercent then return "falling"
+    else return "stable" end
   end
 
-  if old then
-    local frameDelta = mathMax(1, s.gameFrame - old.gameFrame)
-    -- Income rates don't change per-frame; compare raw values over window
-    d.metalIncomeTrend  = s.metalIncome  - old.metalIncome
-    d.energyIncomeTrend = s.energyIncome - old.energyIncome
-    d.buildPowerTrend   = s.totalBuildPower - old.totalBuildPower
+  d.metalIncomeTrend = computeTrend(function(s) return s.metal.income end)
+  d.energyIncomeTrend = computeTrend(function(s) return s.energy.income end)
+  d.buildPowerTrend = computeTrend(function(s) return s.units.totalBuildPower end)
+
+  local function computeStallETA(current, income, expense)
+    local netRate = income - expense
+    if netRate >= 0 then return nil end
+    return current / mathAbs(netRate)
+  end
+
+  d.metalStallETA = computeStallETA(snap.metal.current, snap.metal.income, snap.metal.expense)
+  d.energyStallETA = computeStallETA(snap.energy.current, snap.energy.income, snap.energy.expense)
+
+  local metalIncome = mathMax(snap.metal.income, 0.1)
+  d.energyPerMetal = snap.energy.income / metalIncome
+  d.buildPowerPerMetal = snap.units.totalBuildPower / metalIncome
+
+  local converterCount = snap.units.converterT1Count + snap.units.converterT2Count
+  if converterCount > 0 then
+    d.windToConverterRatio = snap.units.windCount / converterCount
   else
-    d.metalIncomeTrend  = 0
-    d.energyIncomeTrend = 0
-    d.buildPowerTrend   = 0
+    d.windToConverterRatio = snap.units.windCount > 0 and 999 or 0
   end
 
-  -- -------------------------------------------------------------------------
-  -- Stall ETAs (seconds until storage hits 0 at current net rate)
-  -- -------------------------------------------------------------------------
-  local metalNet  = s.metalIncome  - s.metalExpense
-  local energyNet = s.energyIncome - s.energyExpense
-
-  if metalNet < 0 and mathAbs(metalNet) > 0.01 then
-    d.metalStallETA = s.metalCurrent / mathAbs(metalNet)
-  else
-    d.metalStallETA = nil
-  end
-
-  if energyNet < 0 and mathAbs(energyNet) > 0.01 then
-    d.energyStallETA = s.energyCurrent / mathAbs(energyNet)
-  else
-    d.energyStallETA = nil
-  end
-
-  -- -------------------------------------------------------------------------
-  -- Eco ratios
-  -- -------------------------------------------------------------------------
-  d.energyPerMetal = (s.metalIncome > 0.01)
-    and (s.energyIncome / s.metalIncome) or 0
-
-  d.buildPowerPerMetal = (s.metalIncome > 0.01)
-    and (s.totalBuildPower / s.metalIncome) or 0
-
-  local windTotal = (s.windTurbineCount or 0) + (s.advWindTurbineCount or 0)
-  d.windToConverterRatio = (s.energyConverterCount and s.energyConverterCount > 0)
-    and (windTotal / s.energyConverterCount) or nil
-
-  -- -------------------------------------------------------------------------
-  -- Excess / starvation flags
-  -- -------------------------------------------------------------------------
-  d.metalStarving  = s.metalCurrent  < CONFIG.metalStallThreshold
-  d.energyStarving = s.energyCurrent < CONFIG.energyStallThreshold
-  d.energySurplus  = s.energyCurrent > CONFIG.energySurplusThreshold
-  d.metalExcess    = metalNet  > 0 and s.metalCurrent  > (s.metalStorage  * 0.9)
-  d.energyExcess   = energyNet > 0 and s.energyCurrent > (s.energyStorage * 0.9)
+  local eRatio = snap.energy.income / mathMax(snap.energy.expense, 0.1)
+  local mRatio = snap.metal.income / mathMax(snap.metal.expense, 0.1)
+  d.energyExcess = eRatio > CONFIG.energyExcessRatio
+  d.metalExcess = mRatio > CONFIG.energyExcessRatio
+  d.energyStarved = d.energyStallETA ~= nil and d.energyStallETA < CONFIG.stallWarnSeconds * 2
+  d.metalStarved = d.metalStallETA ~= nil and d.metalStallETA < CONFIG.stallWarnSeconds * 2
 end
 
 --------------------------------------------------------------------------------
--- UNIT_CATEGORIES
--- Maps unit names (both Armada "arm*" and Cortex "cor*") to category strings.
+-- Unit Category Lookup
 --------------------------------------------------------------------------------
 local UNIT_CATEGORIES = {
-  -- Metal extractors
-  armmex       = "mex",        cormex       = "mex",
-  armamex      = "advMex",     coramex      = "advMex",
-
-  -- Energy: wind
-  armwin       = "windTurbine",    corwin       = "windTurbine",
-  armtide      = "tidalGen",       cortide      = "tidalGen",
-
-  -- Energy: advanced wind / tidal
-  armawin      = "advWindTurbine", corawin      = "advWindTurbine",
-
-  -- Energy: fusion / advanced
-  armfus       = "fusion",         corfus       = "fusion",
-  armafus      = "advFusion",      corafus      = "advFusion",
-
-  -- Energy: geo
-  armgeo       = "geo",            corgeo       = "geo",
-
-  -- Energy converters (metal to energy)
-  armestor     = "energyStorage",  corestor     = "energyStorage",
-  armsolar     = "solar",          corsolar     = "solar",
-  armadvsol    = "advSolar",       coradvsol    = "advSolar",
-  armmmkr      = "energyConverter", cormmkr     = "energyConverter",
-  armmakr      = "energyConverter", cormakr     = "energyConverter",
-
-  -- Metal storage
-  armmstor     = "metalStorage",   cormstor     = "metalStorage",
-
-  -- Factories (T1)
-  armlab       = "factory",        corlab       = "factory",
-  armalab      = "factory",        coralab      = "factory",
-  armvp        = "factory",        corvp        = "factory",
-  armavp       = "factory",        coravp       = "factory",
-  armsy        = "factory",        corsy        = "factory",
-  armasy       = "factory",        corasy       = "factory",
-  armhp        = "factory",        corhp        = "factory",
-  armahp       = "factory",        corahp       = "factory",
-
-  -- Constructors (mobile)
-  armck        = "constructor",    corck        = "constructor",
-  armcv        = "constructor",    corcv        = "constructor",
-  armcs        = "constructor",    corcs        = "constructor",
-  armca        = "constructor",    corca        = "constructor",
-  armnanotc    = "constructor",    cornanotc    = "constructor",
-  armnanotcplat= "constructor",    cornanotcplat= "constructor",
-
-  -- Advanced constructors
-  armack       = "advConstructor", corack       = "advConstructor",
-  armacv       = "advConstructor", coracv       = "advConstructor",
-  armacs       = "advConstructor", coracs       = "advConstructor",
-
-  -- Commanders
-  armcom       = "commander",      corcom       = "commander",
+  armmex = "mex",       cormex = "mex",
+  armmoho = "mex_t2",   cormoho = "mex_t2",
+  armwin = "wind",      corwin = "wind",
+  armsolar = "solar",   corsolar = "solar",
+  armadvsol = "solar_t2", coradvsol = "solar_t2",
+  armmakr = "converter_t1", cormakr = "converter_t1",
+  armmmkr = "converter_t2", cormmkr = "converter_t2",
+  armestor = "storage_energy", corestor = "storage_energy",
+  armmstor = "storage_metal",  cormstor = "storage_metal",
+  armnanotc = "nano_turret",   cornanotc = "nano_turret",
+  armnanotct2 = "nano_turret_t2", cornanotct2 = "nano_turret_t2",
+  armrad = "radar",     corrad = "radar",
+  armarad = "radar_t2", corarad = "radar_t2",
+  armlab = "factory",   corlab = "factory",
+  armvp = "factory",    corvp = "factory",
+  armalab = "factory_t2", coralab = "factory_t2",
+  armavp = "factory_t2",  coravp = "factory_t2",
+  armfus = "fusion",    corfus = "fusion",
+  armafus = "fusion_t2", corafus = "fusion_t2",
 }
 
 --------------------------------------------------------------------------------
--- State variables
+-- State
 --------------------------------------------------------------------------------
-local myTeamID          = nil
-local myFaction         = nil   -- "arm" or "cor"
-
--- Wind function table; populated in Initialize after we know the Spring version
-local windFns = {
-  getAverageWind = function()
-    return (Game.windMin + Game.windMax) / 2
-  end,
-}
-
--- defID -> category string (built from UNIT_CATEGORIES in Initialize)
+local myTeamID
+local myFaction
+local windFns
 local unitCategoryByDefID = {}
-
--- defID set for units that act as constructors (have buildSpeed)
 local constructorDefIDs = {}
-
--- The circular-buffer accumulator (created in Initialize)
-local accumulator = nil
-
--- Current list of recommendation strings shown in HUD
+local accumulator
 local recommendations = {}
+local currentPhase = "opening"
 
--- Current game phase: "early", "mid", "late"
-local currentPhase = "early"
-
--- FlowUI element references (populated when HUD is built)
-local FlowUI = {
-  panel      = nil,
-  rows       = {},
-  visible    = true,
-}
+-- FlowUI references (bound in ViewResize)
+local vsx, vsy = 0, 0
+local RectRound, RectRoundOutline, UiElement, UiButton
+local font, font2
+local widgetScale = 1
 
 --------------------------------------------------------------------------------
--- Forward declarations
+-- Forward declarations (filled in by later tasks)
 --------------------------------------------------------------------------------
 local collectSnapshot
 local detectPhase
 local evaluateRules
 
 --------------------------------------------------------------------------------
--- buildUnitCategoryMap()
--- Iterates UnitDefNames, cross-references UNIT_CATEGORIES, populates
--- unitCategoryByDefID and constructorDefIDs.
+-- Unit Classification (built at init)
 --------------------------------------------------------------------------------
 local function buildUnitCategoryMap()
-  for name, def in pairs(UnitDefNames) do
-    local cat = UNIT_CATEGORIES[name]
-    if cat then
-      unitCategoryByDefID[def.id] = cat
+  for defID, def in pairs(UnitDefs) do
+    local name = def.name
+    if UNIT_CATEGORIES[name] then
+      unitCategoryByDefID[defID] = UNIT_CATEGORIES[name]
+    elseif def.canMove and def.buildOptions and #def.buildOptions > 0 then
+      unitCategoryByDefID[defID] = "constructor"
     end
-    -- Any unit with a buildSpeed > 0 is treated as a constructor
-    if def.buildSpeed and def.buildSpeed > 0 then
-      constructorDefIDs[def.id] = true
+    if unitCategoryByDefID[defID] == "constructor" then
+      constructorDefIDs[defID] = true
     end
   end
 end
 
 --------------------------------------------------------------------------------
--- detectFaction()
--- Reads the startUnit rules param, falls back to scanning existing units.
--- Sets myFaction to "arm" or "cor" (nil if unknown).
+-- Faction Detection
 --------------------------------------------------------------------------------
 local function detectFaction()
-  -- Method 1: rules param set by game at start
   local startUnit = spGetTeamRulesParam(myTeamID, "startUnit")
   if startUnit then
     local def = UnitDefs[startUnit]
     if def then
-      local name = def.name or ""
-      if strSub(name, 1, 3) == "arm" then
-        myFaction = "arm"
-        return
-      elseif strSub(name, 1, 3) == "cor" then
-        myFaction = "cor"
-        return
+      local prefix = strSub(def.name, 1, 3)
+      if prefix == "arm" then return "armada"
+      elseif prefix == "cor" then return "cortex"
+      elseif prefix == "leg" then return "legion"
       end
     end
   end
-
-  -- Method 2: scan existing units for a commander
-  local units = spGetTeamUnits(myTeamID)
-  if units then
-    for _, unitID in ipairs(units) do
-      local defID = spGetUnitDefID(unitID)
-      if defID then
-        local def = UnitDefs[defID]
-        if def then
-          local name = def.name or ""
-          if strSub(name, 1, 3) == "arm" then
-            myFaction = "arm"
-            return
-          elseif strSub(name, 1, 3) == "cor" then
-            myFaction = "cor"
-            return
-          end
-        end
-      end
-    end
-  end
-
-  myFaction = nil
+  if UnitDefNames["armcom"] then return "armada" end
+  return "cortex"
 end
 
 --------------------------------------------------------------------------------
--- collectSnapshot()
--- Queries the Spring API and returns a Snapshot table representing the
--- current economic state of the player's team.
---
--- Resource layout from Spring.GetTeamResources(teamID, resource):
---   [1] current, [2] income, [3] expense, [4] storage
---   (storage is the cap, not pull)
---
--- Wind layout from Spring.GetWind():
---   [1] x-component, [2] y-component, [3] z-component, [4] speed (magnitude)
---   Use select(4, spGetWind()) to get speed directly.
+-- Snapshot Collector
 --------------------------------------------------------------------------------
 collectSnapshot = function()
-  local gameFrame = spGetGameFrame()
+  local frame = spGetGameFrame()
 
-  -- Resources
-  local metalCurrent, metalIncome, metalExpense, metalStorage =
-    spGetTeamResources(myTeamID, "metal")
-  local energyCurrent, energyIncome, energyExpense, energyStorage =
-    spGetTeamResources(myTeamID, "energy")
+  local mCur, mStor, mPull, mInc, mExp = spGetTeamResources(myTeamID, "metal")
+  local eCur, eStor, ePull, eInc, eExp = spGetTeamResources(myTeamID, "energy")
 
-  -- Wind — use select(4, ...) to get speed (magnitude) directly
-  local windSpeed = select(4, spGetWind())
-  local windMin     = Game.windMin
-  local windMax     = Game.windMax
-  local windAverage = windFns.getAverageWind()
+  local windStrength = select(4, spGetWind())
+  local windMin = Game.windMin
+  local windMax = Game.windMax
+  local windAvg = windFns.getAverageWind()
 
-  -- Unit counts by category
-  local mexCount            = 0
-  local advMexCount         = 0
-  local windTurbineCount    = 0
-  local advWindTurbineCount = 0
-  local tidalGenCount       = 0
-  local solarCount          = 0
-  local advSolarCount       = 0
-  local geoCount            = 0
-  local fusionCount         = 0
-  local advFusionCount      = 0
-  local energyConverterCount = 0
-  local metalStorageCount   = 0
-  local energyStorageCount  = 0
-  local factoryCount        = 0
-  local constructorCount    = 0
-  local advConstructorCount = 0
-  local commanderCount      = 0
-  local totalBuildPower     = 0
-  local idleConstructors    = 0
+  local units = {
+    mexCount = 0, mexT2Count = 0,
+    windCount = 0, solarCount = 0, solarT2Count = 0,
+    converterT1Count = 0, converterT2Count = 0,
+    storageECount = 0, storageMCount = 0,
+    factoryCount = 0, factoryT2Count = 0,
+    nanoTurretCount = 0, constructorCount = 0,
+    radarCount = 0, fusionCount = 0,
+    totalBuildPower = 0, totalUnits = 0, totalMetalValue = 0,
+  }
 
-  -- Factory queue sizes (keyed by unitID, value = queue length)
+  local idleConstructors = 0
   local factoryQueues = {}
 
-  local units = spGetTeamUnits(myTeamID)
-  if units then
-    for _, unitID in ipairs(units) do
-      local defID = spGetUnitDefID(unitID)
-      if defID then
-        local cat = unitCategoryByDefID[defID]
+  local teamUnits = spGetTeamUnits(myTeamID)
+  for i = 1, #teamUnits do
+    local unitID = teamUnits[i]
+    local defID = spGetUnitDefID(unitID)
+    local def = UnitDefs[defID]
+    if def then
+      units.totalUnits = units.totalUnits + 1
+      units.totalMetalValue = units.totalMetalValue + (def.metalCost or 0)
 
-        if cat == "mex"              then mexCount            = mexCount            + 1
-        elseif cat == "advMex"       then advMexCount         = advMexCount         + 1
-        elseif cat == "windTurbine"  then windTurbineCount    = windTurbineCount    + 1
-        elseif cat == "advWindTurbine" then advWindTurbineCount = advWindTurbineCount + 1
-        elseif cat == "tidalGen"     then tidalGenCount       = tidalGenCount       + 1
-        elseif cat == "solar"        then solarCount          = solarCount          + 1
-        elseif cat == "advSolar"     then advSolarCount       = advSolarCount       + 1
-        elseif cat == "geo"          then geoCount            = geoCount            + 1
-        elseif cat == "fusion"       then fusionCount         = fusionCount         + 1
-        elseif cat == "advFusion"    then advFusionCount      = advFusionCount      + 1
-        elseif cat == "energyConverter" then energyConverterCount = energyConverterCount + 1
-        elseif cat == "metalStorage" then metalStorageCount   = metalStorageCount   + 1
-        elseif cat == "energyStorage" then energyStorageCount = energyStorageCount  + 1
-        elseif cat == "commander"    then commanderCount      = commanderCount      + 1
-        elseif cat == "factory"      then
-          factoryCount = factoryCount + 1
-          local queue = spGetFactoryCommands(unitID, -1)
-          factoryQueues[unitID] = queue and #queue or 0
+      if def.buildSpeed and def.buildSpeed > 0 then
+        units.totalBuildPower = units.totalBuildPower + def.buildSpeed
+      end
+
+      local cat = unitCategoryByDefID[defID]
+      if cat == "mex" then units.mexCount = units.mexCount + 1
+      elseif cat == "mex_t2" then units.mexT2Count = units.mexT2Count + 1
+      elseif cat == "wind" then units.windCount = units.windCount + 1
+      elseif cat == "solar" then units.solarCount = units.solarCount + 1
+      elseif cat == "solar_t2" then units.solarT2Count = units.solarT2Count + 1
+      elseif cat == "converter_t1" then units.converterT1Count = units.converterT1Count + 1
+      elseif cat == "converter_t2" then units.converterT2Count = units.converterT2Count + 1
+      elseif cat == "storage_energy" then units.storageECount = units.storageECount + 1
+      elseif cat == "storage_metal" then units.storageMCount = units.storageMCount + 1
+      elseif cat == "factory" then
+        units.factoryCount = units.factoryCount + 1
+        local cmds = spGetFactoryCommands(unitID, 20)
+        if cmds and #cmds > 0 then
+          local firstCmd = cmds[1]
+          table.insert(factoryQueues, {
+            factoryID = unitID,
+            unitDefID = firstCmd.id and -firstCmd.id or nil,
+            queueDepth = #cmds,
+          })
         end
-
-        -- Constructors (includes commander via buildSpeed)
-        if constructorDefIDs[defID] then
-          local def = UnitDefs[defID]
-          if def and def.buildSpeed then
-            totalBuildPower = totalBuildPower + def.buildSpeed
-          end
-          local catStr = cat or ""
-          if catStr == "constructor" or catStr == "advConstructor" or catStr == "commander" then
-            constructorCount = constructorCount + 1
-            -- Check idle: fetch only 1 command; empty = idle
-            local cmds = spGetUnitCommands(unitID, 1)
-            if not cmds or #cmds == 0 then
-              idleConstructors = idleConstructors + 1
-            end
-          end
+      elseif cat == "factory_t2" then
+        units.factoryT2Count = units.factoryT2Count + 1
+        units.factoryCount = units.factoryCount + 1
+        local cmds = spGetFactoryCommands(unitID, 20)
+        if cmds and #cmds > 0 then
+          local firstCmd = cmds[1]
+          table.insert(factoryQueues, {
+            factoryID = unitID,
+            unitDefID = firstCmd.id and -firstCmd.id or nil,
+            queueDepth = #cmds,
+          })
+        end
+      elseif cat == "nano_turret" or cat == "nano_turret_t2" then
+        units.nanoTurretCount = units.nanoTurretCount + 1
+      elseif cat == "radar" or cat == "radar_t2" then
+        units.radarCount = units.radarCount + 1
+      elseif cat == "fusion" or cat == "fusion_t2" then
+        units.fusionCount = units.fusionCount + 1
+      elseif cat == "constructor" then
+        units.constructorCount = units.constructorCount + 1
+        local cmds = spGetUnitCommands(unitID, 1)
+        if not cmds or #cmds == 0 then
+          idleConstructors = idleConstructors + 1
         end
       end
     end
   end
 
   return {
-    gameFrame            = gameFrame,
-
-    -- Raw resources
-    metalCurrent         = metalCurrent   or 0,
-    metalIncome          = metalIncome    or 0,
-    metalExpense         = metalExpense   or 0,
-    metalStorage         = metalStorage   or 0,
-    energyCurrent        = energyCurrent  or 0,
-    energyIncome         = energyIncome   or 0,
-    energyExpense        = energyExpense  or 0,
-    energyStorage        = energyStorage  or 0,
-
-    -- Wind
-    windSpeed            = windSpeed      or 0,
-    windMin              = windMin        or 0,
-    windMax              = windMax        or 0,
-    windAverage          = windAverage    or 0,
-
-    -- Unit counts
-    mexCount             = mexCount,
-    advMexCount          = advMexCount,
-    windTurbineCount     = windTurbineCount,
-    advWindTurbineCount  = advWindTurbineCount,
-    tidalGenCount        = tidalGenCount,
-    solarCount           = solarCount,
-    advSolarCount        = advSolarCount,
-    geoCount             = geoCount,
-    fusionCount          = fusionCount,
-    advFusionCount       = advFusionCount,
-    energyConverterCount = energyConverterCount,
-    metalStorageCount    = metalStorageCount,
-    energyStorageCount   = energyStorageCount,
-    factoryCount         = factoryCount,
-    constructorCount     = constructorCount,
-    advConstructorCount  = advConstructorCount,
-    commanderCount       = commanderCount,
-
-    -- Derived from units
-    totalBuildPower      = totalBuildPower,
-    idleConstructors     = idleConstructors,
-    factoryQueues        = factoryQueues,
+    frame = frame,
+    gameSeconds = frame / 30,
+    metal = { current = mCur, storage = mStor, pull = mPull, income = mInc, expense = mExp },
+    energy = { current = eCur, storage = eStor, pull = ePull, income = eInc, expense = eExp },
+    wind = { current = windStrength, min = windMin, max = windMax, avg = windAvg },
+    units = units,
+    idleConstructors = idleConstructors,
+    factoryQueues = factoryQueues,
   }
 end
 
 --------------------------------------------------------------------------------
--- widget:Initialize()
+-- Widget Lifecycle
 --------------------------------------------------------------------------------
 function widget:Initialize()
-  myTeamID    = spGetMyTeamID()
-  accumulator = StateAccumulator:new(CONFIG.bufferSize)
-
+  myTeamID = spGetMyTeamID()
+  myFaction = detectFaction()
   buildUnitCategoryMap()
-  detectFaction()
-
-  spEcho(strFormat("[EcoAdvisor] Initialized. Team=%d Faction=%s", myTeamID, tostring(myFaction)))
+  windFns = VFS.Include("common/wind_functions.lua")
+  accumulator = StateAccumulator:new(CONFIG.bufferSize)
+  spEcho("[Eco Advisor] Initialized — faction: " .. myFaction)
 end
-
---------------------------------------------------------------------------------
--- widget:GameFrame(n)
---------------------------------------------------------------------------------
-local sampleCount = 0
 
 function widget:GameFrame(n)
   if n % CONFIG.sampleInterval ~= 0 then return end
-
   local snapshot = collectSnapshot()
   accumulator:push(snapshot)
-  sampleCount = sampleCount + 1
 
-  -- Debug logging every 10 samples (~10s at default interval)
-  if sampleCount % 10 == 0 then
-    local s = accumulator:latest()
-    local d = accumulator.derived
-    spEcho(strFormat(
-      "[EcoAdvisor] frame=%d m=%.1f/%.1f e=%.1f/%.1f mex=%d wind=%d bp=%.0f idle=%d",
-      s.gameFrame,
-      s.metalCurrent,  s.metalIncome,
-      s.energyCurrent, s.energyIncome,
-      s.mexCount, s.windTurbineCount,
-      s.totalBuildPower, s.idleConstructors
-    ))
-    if d.metalStallETA then
-      spEcho(strFormat("[EcoAdvisor] metal stall ETA: %.1fs", d.metalStallETA))
-    end
-    if d.energyStallETA then
-      spEcho(strFormat("[EcoAdvisor] energy stall ETA: %.1fs", d.energyStallETA))
-    end
+  if n % (CONFIG.sampleInterval * 10) == 0 then
+    spEcho(strFormat("[Eco Advisor] M: %.0f/%.0f (%.1f/s) E: %.0f/%.0f (%.1f/s) Wind: %.1f Units: %d Idle: %d",
+      snapshot.metal.current, snapshot.metal.storage, snapshot.metal.income,
+      snapshot.energy.current, snapshot.energy.storage, snapshot.energy.income,
+      snapshot.wind.current, snapshot.units.totalUnits, snapshot.idleConstructors))
   end
 end
 
---------------------------------------------------------------------------------
--- widget:ViewResize(vsx, vsy)
---------------------------------------------------------------------------------
-function widget:ViewResize(vsx, vsy)
-  -- HUD layout recalculation will be implemented when the draw layer is built
-  FlowUI.viewX = vsx
-  FlowUI.viewY = vsy
+function widget:ViewResize(newVsx, newVsy)
+  vsx, vsy = newVsx or vsx, newVsy or vsy
+  if WG.FlowUI then
+    widgetScale = WG.FlowUI.scale or 1
+    RectRound = WG.FlowUI.Draw.RectRound
+    RectRoundOutline = WG.FlowUI.Draw.RectRoundOutline
+    UiElement = WG.FlowUI.Draw.Element
+  end
+  if WG["fonts"] then
+    font = WG["fonts"].getFont()
+  end
 end
 
---------------------------------------------------------------------------------
--- widget:DrawScreen()
---------------------------------------------------------------------------------
 function widget:DrawScreen()
-  -- Full HUD rendering will be implemented in a later task.
-  -- Placeholder: nothing drawn yet.
+  -- Filled in Task 5
 end
 
---------------------------------------------------------------------------------
--- widget:KeyPress(key, mods, isRepeat)
---------------------------------------------------------------------------------
 function widget:KeyPress(key, mods, isRepeat)
-  -- Toggle HUD visibility with Alt+E (key 101 = 'e')
-  if key == 101 and mods.alt then
-    FlowUI.visible = not FlowUI.visible
-    return true
-  end
+  -- Filled in Task 6
   return false
 end
