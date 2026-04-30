@@ -64,6 +64,29 @@ local CONFIG = {
 }
 
 --------------------------------------------------------------------------------
+-- HUD Colors
+--------------------------------------------------------------------------------
+local COLORS = {
+  background  = { 0.1, 0.1, 0.1, 0.85 },
+  border      = { 0.3, 0.3, 0.3, 0.6 },
+  header      = { 0.8, 0.8, 0.8, 1.0 },
+  phase       = { 0.6, 0.8, 1.0, 1.0 },
+  urgent      = { 1.0, 0.3, 0.2, 1.0 },
+  high        = { 1.0, 0.85, 0.2, 1.0 },
+  normal      = { 0.85, 0.85, 0.85, 1.0 },
+  low         = { 0.6, 0.6, 0.6, 1.0 },
+  reason      = { 0.5, 0.5, 0.5, 0.9 },
+  blueprint   = { 0.4, 0.8, 0.4, 1.0 },
+}
+
+local function getPriorityColor(rec)
+  if rec.urgent then return COLORS.urgent end
+  if rec.priority <= 2 then return COLORS.high end
+  if rec.priority <= 3 then return COLORS.normal end
+  return COLORS.low
+end
+
+--------------------------------------------------------------------------------
 -- State Accumulator
 --------------------------------------------------------------------------------
 local StateAccumulator = {}
@@ -209,6 +232,7 @@ local constructorDefIDs = {}
 local accumulator
 local recommendations = {}
 local currentPhase = "opening"
+local widgetTime = 0
 
 -- FlowUI references (bound in ViewResize)
 local vsx, vsy = 0, 0
@@ -569,6 +593,7 @@ function widget:Initialize()
   windFns = VFS.Include("common/wind_functions.lua")
   accumulator = StateAccumulator:new(CONFIG.bufferSize)
   spEcho("[Eco Advisor] Initialized — faction: " .. myFaction)
+  widget:ViewResize(Spring.GetViewGeometry())
 end
 
 function widget:GameFrame(n)
@@ -588,6 +613,10 @@ function widget:GameFrame(n)
   end
 end
 
+function widget:Update(dt)
+  widgetTime = widgetTime + dt
+end
+
 function widget:ViewResize(newVsx, newVsy)
   vsx, vsy = newVsx or vsx, newVsy or vsy
   if WG.FlowUI then
@@ -602,7 +631,69 @@ function widget:ViewResize(newVsx, newVsy)
 end
 
 function widget:DrawScreen()
-  -- Filled in Task 5
+  if not font or #recommendations == 0 then return end
+
+  local scale = widgetScale
+  local panelWidth = CONFIG.hudWidth * scale
+  local lineHeight = 18 * scale
+  local padding = 8 * scale
+  local headerHeight = 24 * scale
+  local recCount = mathMin(#recommendations, CONFIG.maxRecommendations)
+
+  local panelHeight = headerHeight + padding + (recCount * (lineHeight * 2 + padding)) + padding
+  local topRecHasBlueprint = recommendations[1] and recommendations[1].blueprint
+  if topRecHasBlueprint then
+    panelHeight = panelHeight + lineHeight + padding
+  end
+
+  local px = vsx - panelWidth - 10 * scale
+  local py = vsy - panelHeight - 10 * scale
+
+  -- Background panel
+  if UiElement then
+    UiElement(px, py, px + panelWidth, py + panelHeight, 0, 0, 1, 1)
+  else
+    gl.Color(COLORS.background)
+    gl.Rect(px, py, px + panelWidth, py + panelHeight)
+  end
+
+  -- Header: "Eco Advisor — [phase]"
+  local headerY = py + panelHeight - headerHeight
+  font:Begin()
+  font:SetTextColor(COLORS.header)
+  font:Print("Eco Advisor", px + padding, headerY + 4 * scale, 14 * scale, "o")
+  font:SetTextColor(COLORS.phase)
+  font:Print(currentPhase, px + panelWidth - padding, headerY + 4 * scale, 11 * scale, "or")
+
+  -- Recommendations
+  local curY = headerY - padding
+  for i = 1, recCount do
+    local rec = recommendations[i]
+    local color = getPriorityColor(rec)
+
+    -- Pulse effect for urgent
+    if rec.urgent then
+      local pulse = 0.7 + 0.3 * math.sin(widgetTime * 6)
+      color = { color[1] * pulse, color[2] * pulse, color[3] * pulse, color[4] }
+    end
+
+    curY = curY - lineHeight
+    font:SetTextColor(color)
+    font:Print(rec.display, px + padding, curY, 12 * scale, "o")
+    curY = curY - lineHeight
+    font:SetTextColor(COLORS.reason)
+    font:Print(rec.reason, px + padding + 8 * scale, curY, 10 * scale, "o")
+    curY = curY - padding * 0.5
+  end
+
+  -- Blueprint hint
+  if topRecHasBlueprint then
+    curY = curY - lineHeight
+    font:SetTextColor(COLORS.blueprint)
+    font:Print("Press [B] to place suggested blueprint", px + padding, curY, 11 * scale, "o")
+  end
+
+  font:End()
 end
 
 function widget:KeyPress(key, mods, isRepeat)
