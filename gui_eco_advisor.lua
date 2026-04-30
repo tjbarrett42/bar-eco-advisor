@@ -681,19 +681,14 @@ function widget:GameFrame(n)
   accumulator:push(snapshot)
   currentPhase = detectPhase(accumulator)
   recommendations = evaluateRules(accumulator, currentPhase)
-
-  if n % (CONFIG.sampleInterval * 10) == 0 then
-    spEcho(strFormat("[Eco Advisor] Phase: %s | Recs: %d", currentPhase, #recommendations))
-    for i, rec in ipairs(recommendations) do
-      if i <= 3 then
-        spEcho(strFormat("  [%d] P%d %s: %s", i, rec.priority, rec.category, rec.display))
-      end
-    end
-  end
 end
 
 function widget:Update(dt)
   widgetTime = widgetTime + dt
+end
+
+function widget:Shutdown()
+  spEcho("[Eco Advisor] Shutdown")
 end
 
 function widget:ViewResize(newVsx, newVsy)
