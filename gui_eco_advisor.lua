@@ -222,6 +222,85 @@ local UNIT_CATEGORIES = {
 }
 
 --------------------------------------------------------------------------------
+-- Blueprint Templates
+--------------------------------------------------------------------------------
+local BUILD_SQ = 16
+
+local BLUEPRINT_TEMPLATES = {
+  wind_farm = {
+    name = "Eco Advisor: Wind Farm",
+    units = {
+      { unitName = "armwin", position = { -BUILD_SQ * 2, 0, -BUILD_SQ * 2 }, facing = 0 },
+      { unitName = "armwin", position = {  BUILD_SQ * 2, 0, -BUILD_SQ * 2 }, facing = 0 },
+      { unitName = "armwin", position = { -BUILD_SQ * 2, 0,  BUILD_SQ * 2 }, facing = 0 },
+      { unitName = "armwin", position = {  BUILD_SQ * 2, 0,  BUILD_SQ * 2 }, facing = 0 },
+    },
+    spacing = 1,
+    facing = 0,
+    ordered = true,
+  },
+  solar_cluster = {
+    name = "Eco Advisor: Solar Cluster",
+    units = {
+      { unitName = "armsolar", position = { -BUILD_SQ * 3, 0, -BUILD_SQ * 3 }, facing = 0 },
+      { unitName = "armsolar", position = {  BUILD_SQ * 3, 0, -BUILD_SQ * 3 }, facing = 0 },
+      { unitName = "armsolar", position = { -BUILD_SQ * 3, 0,  BUILD_SQ * 3 }, facing = 0 },
+      { unitName = "armsolar", position = {  BUILD_SQ * 3, 0,  BUILD_SQ * 3 }, facing = 0 },
+    },
+    spacing = 1,
+    facing = 0,
+    ordered = true,
+  },
+  converter_cluster = {
+    name = "Eco Advisor: Converter Pair",
+    units = {
+      { unitName = "armmakr", position = { -BUILD_SQ, 0, 0 }, facing = 0 },
+      { unitName = "armmakr", position = {  BUILD_SQ, 0, 0 }, facing = 0 },
+    },
+    spacing = 1,
+    facing = 0,
+    ordered = true,
+  },
+  nano_turret_pair = {
+    name = "Eco Advisor: Nano Pair",
+    units = {
+      { unitName = "armnanotc", position = { -BUILD_SQ * 2, 0, 0 }, facing = 0 },
+      { unitName = "armnanotc", position = {  BUILD_SQ * 2, 0, 0 }, facing = 0 },
+    },
+    spacing = 1,
+    facing = 0,
+    ordered = true,
+  },
+}
+
+--------------------------------------------------------------------------------
+-- Blueprint Placement
+--------------------------------------------------------------------------------
+local function activateBlueprint(templateKey)
+  local template = BLUEPRINT_TEMPLATES[templateKey]
+  if not template then
+    spEcho("[Eco Advisor] Unknown blueprint template: " .. tostring(templateKey))
+    return false
+  end
+
+  local blueprintAPI = WG["api_blueprint"]
+  if not blueprintAPI then
+    spEcho("[Eco Advisor] Blueprint API not available — is the blueprint widget enabled?")
+    return false
+  end
+
+  local bp = blueprintAPI.createBlueprintFromSerialized(template)
+  if bp then
+    blueprintAPI.setActiveBlueprint(bp)
+    spEcho("[Eco Advisor] Blueprint activated: " .. template.name)
+    return true
+  else
+    spEcho("[Eco Advisor] Failed to create blueprint from template: " .. template.name)
+    return false
+  end
+end
+
+--------------------------------------------------------------------------------
 -- State
 --------------------------------------------------------------------------------
 local myTeamID
@@ -696,7 +775,17 @@ function widget:DrawScreen()
   font:End()
 end
 
+local BLUEPRINT_HOTKEY = 98  -- 'b' key
+
 function widget:KeyPress(key, mods, isRepeat)
-  -- Filled in Task 6
+  if key ~= BLUEPRINT_HOTKEY or isRepeat then return false end
+  if mods.ctrl or mods.alt or mods.meta then return false end
+
+  local topRec = recommendations[1]
+  if topRec and topRec.blueprint then
+    if activateBlueprint(topRec.blueprint) then
+      return true
+    end
+  end
   return false
 end
