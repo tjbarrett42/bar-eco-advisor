@@ -362,6 +362,204 @@ collectSnapshot = function()
 end
 
 --------------------------------------------------------------------------------
+-- Phase Detector
+--------------------------------------------------------------------------------
+local hasT2Factory = false
+
+detectPhase = function(acc)
+  local snap = acc:latest()
+  if not snap then return "opening" end
+  local t = snap.gameSeconds
+  local u = snap.units
+
+  hasT2Factory = u.factoryT2Count > 0
+
+  if t < CONFIG.openingMaxTime and u.mexCount < CONFIG.openingMaxMex then
+    return "opening"
+  elseif t < CONFIG.earlyMaxTime and u.mexT2Count == 0 and not hasT2Factory then
+    return "early"
+  elseif u.mexT2Count > 0 or hasT2Factory then
+    if snap.metal.income > CONFIG.lateMinMetal then
+      return "late"
+    else
+      return "t2_transition"
+    end
+  else
+    return "mid"
+  end
+end
+
+--------------------------------------------------------------------------------
+-- Rules Engine
+--------------------------------------------------------------------------------
+local rules = {
+  {
+    name = "energy_stall_imminent",
+    condition = function(state, phase)
+      return state.derived.energyStallETA ~= nil
+        and state.derived.energyStallETA < CONFIG.stallWarnSeconds
+    end,
+    generate = function(state, phase)
+      local snap = state.latest
+      local windViable = snap.wind.avg >= CONFIG.windViableThreshold
+      local eta = mathFloor(state.derived.energyStallETA)
+      return {
+        priority = 1,
+        category = "energy",
+        action = windViable and "build_wind" or "build_solar",
+        display = windViable
+          and strFormat("Build wind turbines (stall in ~%ds)", eta)
+          or strFormat("Build solar collectors (stall in ~%ds)", eta),
+        reason = "Energy expense exceeds income, stockpile draining",
+        blueprint = windViable and "wind_farm" or "solar_cluster",
+        urgent = true,
+      }
+    end,
+  },
+  {
+    name = "metal_stall_imminent",
+    condition = function(state, phase)
+      return state.derived.metalStallETA ~= nil
+        and state.derived.metalStallETA < CONFIG.stallWarnSeconds
+    end,
+    generate = function(state, phase)
+      local eta = mathFloor(state.derived.metalStallETA)
+      return {
+        priority = 1,
+        category = "metal",
+        action = "expand_mex",
+        display = strFormat("Claim more metal spots (stall in ~%ds)", eta),
+        reason = "Metal expense exceeds income",
+        urgent = true,
+      }
+    end,
+  },
+  {
+    name = "energy_excess_convert",
+    condition = function(state, phase)
+      return state.derived.energyExcess and phase ~= "opening"
+    end,
+    generate = function(state, phase)
+      return {
+        priority = 4,
+        category = "energy",
+        action = "build_converter",
+        display = "Build energy converters",
+        reason = "Excess energy — convert to metal",
+        blueprint = "converter_cluster",
+        urgent = false,
+      }
+    end,
+  },
+  {
+    name = "converter_ratio_low",
+    condition = function(state, phase)
+      return state.latest.wind.avg >= CONFIG.windViableThreshold
+        and state.derived.windToConverterRatio > CONFIG.windToConverterMax
+        and phase ~= "opening"
+    end,
+    generate = function(state, phase)
+      return {
+        priority = 4,
+        category = "energy",
+        action = "build_converter",
+        display = "Add converters (wind:converter ratio high)",
+        reason = strFormat("Ratio is %.1f:1, target ~6:1", state.derived.windToConverterRatio),
+        blueprint = "converter_cluster",
+        urgent = false,
+      }
+    end,
+  },
+  {
+    name = "buildpower_low",
+    condition = function(state, phase)
+      return state.derived.buildPowerPerMetal < CONFIG.bpPerMetalLow
+        and phase ~= "opening"
+    end,
+    generate = function(state, phase)
+      return {
+        priority = 3,
+        category = "buildpower",
+        action = "build_nano_or_con",
+        display = "Build nano turret or constructor",
+        reason = "Build power too low for current income",
+        blueprint = "nano_turret_pair",
+        urgent = false,
+      }
+    end,
+  },
+  {
+    name = "buildpower_excessive",
+    condition = function(state, phase)
+      return state.derived.buildPowerPerMetal > CONFIG.bpPerMetalHigh
+        and state.latest.idleConstructors > 1
+    end,
+    generate = function(state, phase)
+      return {
+        priority = 5,
+        category = "buildpower",
+        action = "skip_constructors",
+        display = "Don't build more constructors",
+        reason = strFormat("%d constructors idle — focus on eco", state.latest.idleConstructors),
+        urgent = false,
+      }
+    end,
+  },
+  {
+    name = "t2_ready",
+    condition = function(state, phase)
+      return phase == "mid"
+        and state.latest.metal.income > CONFIG.t2ReadyMetal
+        and state.latest.energy.income > CONFIG.t2ReadyEnergy
+    end,
+    generate = function(state, phase)
+      return {
+        priority = 2,
+        category = "production",
+        action = "start_t2",
+        display = "Economy supports T2 — start transition",
+        reason = strFormat("Metal: %.0f/s, Energy: %.0f/s — ready for T2",
+          state.latest.metal.income, state.latest.energy.income),
+        urgent = false,
+      }
+    end,
+  },
+  {
+    name = "no_radar",
+    condition = function(state, phase)
+      return state.latest.units.radarCount == 0
+        and phase ~= "opening"
+    end,
+    generate = function(state, phase)
+      return {
+        priority = 3,
+        category = "defense",
+        action = "build_radar",
+        display = "Build a radar tower",
+        reason = "No radar coverage — vulnerable to attacks",
+        urgent = false,
+      }
+    end,
+  },
+}
+
+evaluateRules = function(acc, phase)
+  local results = {}
+  local state = {
+    derived = acc.derived,
+    latest  = acc:latest(),
+  }
+  if not state.latest then return results end
+  for _, rule in ipairs(rules) do
+    if rule.condition(state, phase) then
+      results[#results + 1] = rule.generate(state, phase)
+    end
+  end
+  table.sort(results, function(a, b) return a.priority < b.priority end)
+  return results
+end
+
+--------------------------------------------------------------------------------
 -- Widget Lifecycle
 --------------------------------------------------------------------------------
 function widget:Initialize()
@@ -377,12 +575,16 @@ function widget:GameFrame(n)
   if n % CONFIG.sampleInterval ~= 0 then return end
   local snapshot = collectSnapshot()
   accumulator:push(snapshot)
+  currentPhase = detectPhase(accumulator)
+  recommendations = evaluateRules(accumulator, currentPhase)
 
   if n % (CONFIG.sampleInterval * 10) == 0 then
-    spEcho(strFormat("[Eco Advisor] M: %.0f/%.0f (%.1f/s) E: %.0f/%.0f (%.1f/s) Wind: %.1f Units: %d Idle: %d",
-      snapshot.metal.current, snapshot.metal.storage, snapshot.metal.income,
-      snapshot.energy.current, snapshot.energy.storage, snapshot.energy.income,
-      snapshot.wind.current, snapshot.units.totalUnits, snapshot.idleConstructors))
+    spEcho(strFormat("[Eco Advisor] Phase: %s | Recs: %d", currentPhase, #recommendations))
+    for i, rec in ipairs(recommendations) do
+      if i <= 3 then
+        spEcho(strFormat("  [%d] P%d %s: %s", i, rec.priority, rec.category, rec.display))
+      end
+    end
   end
 end
 
