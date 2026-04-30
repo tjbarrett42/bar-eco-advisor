@@ -306,6 +306,7 @@ end
 local myTeamID
 local myFaction
 local windFns
+local cachedWindAvg
 local unitCategoryByDefID = {}
 local constructorDefIDs = {}
 local accumulator
@@ -315,8 +316,8 @@ local widgetTime = 0
 
 -- FlowUI references (bound in ViewResize)
 local vsx, vsy = 0, 0
-local RectRound, RectRoundOutline, UiElement, UiButton
-local font, font2
+local RectRound, RectRoundOutline, UiElement
+local font
 local widgetScale = 1
 
 --------------------------------------------------------------------------------
@@ -349,7 +350,7 @@ end
 local function detectFaction()
   local startUnit = spGetTeamRulesParam(myTeamID, "startUnit")
   if startUnit then
-    local def = UnitDefs[startUnit]
+    local def = UnitDefs[startUnit] or (type(startUnit) == "string" and UnitDefNames[startUnit])
     if def then
       local prefix = strSub(def.name, 1, 3)
       if prefix == "arm" then return "armada"
@@ -374,7 +375,7 @@ collectSnapshot = function()
   local windStrength = select(4, spGetWind())
   local windMin = Game.windMin
   local windMax = Game.windMax
-  local windAvg = windFns.getAverageWind()
+  local windAvg = cachedWindAvg
 
   local units = {
     mexCount = 0, mexT2Count = 0,
@@ -399,11 +400,12 @@ collectSnapshot = function()
       units.totalUnits = units.totalUnits + 1
       units.totalMetalValue = units.totalMetalValue + (def.metalCost or 0)
 
-      if def.buildSpeed and def.buildSpeed > 0 then
+      local cat = unitCategoryByDefID[defID]
+      local isBuildPowerUnit = cat == "constructor" or cat == "factory" or cat == "factory_t2"
+        or cat == "nano_turret" or cat == "nano_turret_t2"
+      if isBuildPowerUnit and def.buildSpeed and def.buildSpeed > 0 then
         units.totalBuildPower = units.totalBuildPower + def.buildSpeed
       end
-
-      local cat = unitCategoryByDefID[defID]
       if cat == "mex" then units.mexCount = units.mexCount + 1
       elseif cat == "mex_t2" then units.mexT2Count = units.mexT2Count + 1
       elseif cat == "wind" then units.windCount = units.windCount + 1
@@ -670,6 +672,7 @@ function widget:Initialize()
   myFaction = detectFaction()
   buildUnitCategoryMap()
   windFns = VFS.Include("common/wind_functions.lua")
+  cachedWindAvg = windFns.getAverageWind()
   accumulator = StateAccumulator:new(CONFIG.bufferSize)
   spEcho("[Eco Advisor] Initialized — faction: " .. myFaction)
   widget:ViewResize(Spring.GetViewGeometry())
