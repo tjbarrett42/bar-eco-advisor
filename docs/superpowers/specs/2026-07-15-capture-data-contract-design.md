@@ -90,7 +90,7 @@ give/take; `commandId` + `commandTarget` for command changes; `workerTask`
 `heading`, `vx`, `vz`, `health`, `buildProgress`, `metalMake`, `metalUse`,
 `energyMake`, `energyUse` (`GetUnitResources`), `isActive`, `isStunned`,
 `beingBuilt`, `currentBuildPower` (`GetUnitCurrentBuildPower`), `experience`,
-`weaponTargetType`, `weaponTargetId`.
+`weaponTargetType`, `weaponTargetId` (primary weapon).
 
 **`team_frames`** (per team per frame): `game_id`, `frame`, `teamId`, and for
 each of metal/energy the full `GetTeamResources` tuple —
@@ -117,7 +117,7 @@ meaningful, nothing purely internal.
 | table | grain | key | notes |
 |---|---|---|---|
 | `static_defs` | one unitDef per def_hash | (`def_hash`, `unitDefName`) | dimension, deduped across games |
-| `games` | one game (per player perspective) | `game_id` | provenance block |
+| `games` | one match | `game_id` | provenance block; `teams` covers all teams (full global view) |
 | `units` | one unit per game | (`game_id`, `unitId`) | born-once; FK `unitDefName` → static_defs |
 | `events` | one transition | (`game_id`, `frame`, seq) | sparse |
 | `unit_frames` | one unit per frame | (`game_id`, `frame`, `unitId`) | dense fact; FK `unitId` → units |
@@ -126,11 +126,18 @@ meaningful, nothing purely internal.
 
 - **Foreign keys:** `unit_frames.unitId` → `units`; `units.unitDefName` +
   `games.def_hash` → `static_defs`.
-- **Partitioning:** by `game_id` (a directory per game), so DuckDB prunes to the
-  games and frame-ranges a query touches. `unit_frames` may sub-partition by
-  `teamId`.
+- **Partitioning:** per-match tables (`games`, `units`, `events`, `unit_frames`,
+  `team_frames`, `feature_frames`) partition by `game_id` (a directory per
+  match), so DuckDB prunes to the games and frame-ranges a query touches.
+  `unit_frames` may sub-partition by `teamId`. `static_defs` is a **shared
+  dimension** stored once at a top-level location keyed by `def_hash` (not
+  per-match), so identical defs are stored a single time across the whole corpus.
 - Facts are **wide** (one column per field), not long/EAV — required for OLAP
   performance.
+- **Identifiers & timing:** `game_id` is a stable id derived from the source demo
+  (e.g. its content hash); `def_hash` from the UnitDefs dump. `frame` is the
+  canonical clock (30 frames/s; `ms = frame * 1000 / 30`). Capture spans frame 1
+  through `GameOver`.
 
 ## Storage format
 
@@ -189,10 +196,11 @@ sim/model against the captured data (e.g. eco-advisor's sim-vs-real
 calibration). Model validation verifies a *model*, not the data; it is
 per-consumer and out of scope here (see below).
 
-1. **Round-trip lossless.** Decode the Parquet store back to a dense per-frame
-   matrix; assert cell-identical to the original dense JSONL capture (integers
-   exact, floats within ε; per-column checksums). Proves compression introduced
-   no distortion.
+1. **Round-trip lossless.** For every table, the Parquet reproduces each raw
+   JSONL row exactly — dense continuous tables (`unit_frames`, `team_frames`)
+   reconstruct the full per-frame matrix; sparse tables (`events`,
+   `feature_frames`) match row-for-row. Integers exact, floats within ε,
+   per-column checksums. Proves compression introduced no distortion.
 2. **Two-level economic conservation** (per frame, per team). Σ over the team's
    units of `(metalMake − metalUse)` ≈ team `(income − expense)` from
    `GetTeamResources`, within ε. The residual (team-aggregate minus
