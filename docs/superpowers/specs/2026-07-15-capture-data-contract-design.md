@@ -177,8 +177,17 @@ explicitly).
 ## Verification invariants
 
 The contract defines "losslessly captured and honestly reduced" as
-machine-checkable invariants any producer must satisfy — the acceptance tests,
-held in the contract so both repos meet the same bar.
+machine-checkable invariants. These are **data-integrity** checks that verify
+the captured/baked data faithfully represents the engine — they are **run by the
+producer's baker as the publish gate**, and only Parquet that passes is kept.
+Consumers receive verified data and trust it; they do not re-run these. (Check 1
+in particular *can only* run in the producer: the dense JSONL reference exists
+only transiently on the capture machine.)
+
+This is distinct from **model validation** — a consumer comparing its own
+sim/model against the captured data (e.g. eco-advisor's sim-vs-real
+calibration). Model validation verifies a *model*, not the data; it is
+per-consumer and out of scope here (see below).
 
 1. **Round-trip lossless.** Decode the Parquet store back to a dense per-frame
    matrix; assert cell-identical to the original dense JSONL capture (integers
@@ -208,10 +217,15 @@ Integers (frames, ids, counts) are exact everywhere.
 
 ## Out of scope (separate specs)
 
-- Producer implementation: the v3 Lua widget, extraction driver, baker,
-  uploader.
-- Consumer implementation: eco-advisor ingest, the reconciliation harness
-  runtime, analysis, UI.
+- Producer implementation: the v3 Lua widget, extraction driver, baker (which
+  **runs the data-integrity verification invariants above as the publish
+  gate**), uploader.
+- Consumer implementation: eco-advisor ingest, analysis, UI, and **model
+  validation** — comparing a consumer's own sim/model against the captured data
+  (e.g. eco-advisor's sim-vs-real calibration; the existing `compare-real` is
+  this). Model validation is **per-consumer, not shared**: each analysis repo
+  validates its own model. A shared typed reader for the contract may be
+  extracted into a small library once ≥2 consumers exist.
 - The live in-game LUA display (a future repo, designed after we learn from
   captured data what is worth showing).
 
