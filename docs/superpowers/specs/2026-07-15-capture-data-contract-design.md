@@ -86,7 +86,8 @@ give/take; `commandId` + `commandTarget` for command changes; `workerTask`
 
 ### Tier 4 — Continuous (captured every frame, dense)
 
-**`unit_frames`** (per unit per frame): `game_id`, `frame`, `unitId`, `x`, `z`,
+**`unit_frames`** (per unit per frame): `game_id`, `frame`, `unitId`, `teamId`
+(per-frame ownership — changes on capture/give), `x`, `z`,
 `heading`, `vx`, `vz`, `health`, `buildProgress`, `metalMake`, `metalUse`,
 `energyMake`, `energyUse` (`GetUnitResources`), `isActive`, `isStunned`,
 `beingBuilt`, `currentBuildPower` (`GetUnitCurrentBuildPower`), `experience`,
