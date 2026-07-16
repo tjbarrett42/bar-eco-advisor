@@ -1,3 +1,5 @@
+import { ROLE_CASE } from "./roles.js";
+
 export type Metric = {
   id: string;
   label: string;
@@ -32,6 +34,52 @@ export const REGISTRY: Metric[] = [
   rawTeam("metalProduced", "Cumulative metal produced", "metal"),
   rawTeam("energyProduced", "Cumulative energy produced", "energy"),
 ];
+
+// One allocation series (metal spent constructing units of a given role, per frame per player).
+function allocMetric(role: string, label: string): Metric {
+  return {
+    id: `alloc_${role}`, label, unit: "metal/s", grain: "player", kind: "derived",
+    sql: `
+      WITH steps AS (
+        SELECT uf.frame, uf.teamId,
+               sd.metalCost * (uf.buildProgress
+                 - LAG(uf.buildProgress) OVER (PARTITION BY uf.unitId ORDER BY uf.frame)) AS spend,
+               ${ROLE_CASE} AS role
+        FROM unit_frames uf
+        JOIN units u ON u.unitId = uf.unitId
+        JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+        WHERE uf.beingBuilt = 1
+      )
+      SELECT frame, teamId AS key, COALESCE(SUM(spend), 0) AS value
+      FROM steps WHERE role = '${role}' GROUP BY frame, teamId`,
+  };
+}
+
+REGISTRY.push(
+  { id: "metal_stall", label: "Metal stall (pull−expense)", unit: "metal/s",
+    grain: "player", kind: "derived",
+    sql: `SELECT frame, teamId AS key, (m_pull - m_expense) AS value FROM team_frames` },
+  { id: "energy_stall", label: "Energy stall (pull−expense)", unit: "energy/s",
+    grain: "player", kind: "derived",
+    sql: `SELECT frame, teamId AS key, (e_pull - e_expense) AS value FROM team_frames` },
+  { id: "converter_uptime", label: "Converter uptime", unit: "fraction",
+    grain: "player", kind: "derived",
+    sql: `SELECT frame, teamId AS key, mm_use / NULLIF(mm_capacity, 0) AS value FROM team_frames` },
+  { id: "build_power_util", label: "Build power utilization", unit: "fraction",
+    grain: "player", kind: "derived",
+    sql: `
+      SELECT uf.frame, uf.teamId AS key,
+             SUM(uf.currentBuildPower) / NULLIF(SUM(sd.buildPower), 0) AS value
+      FROM unit_frames uf
+      JOIN units u ON u.unitId = uf.unitId
+      JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+      WHERE sd.buildPower > 0
+      GROUP BY uf.frame, uf.teamId` },
+  allocMetric("eco", "Metal → economy"),
+  allocMetric("bp", "Metal → build power"),
+  allocMetric("army", "Metal → army"),
+  allocMetric("defense", "Metal → defense"),
+);
 
 export function getMetric(id: string): Metric | undefined {
   return REGISTRY.find((m) => m.id === id);
