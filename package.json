@@ -5,7 +5,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "gen": "tsx src/gen/cli.ts",
+    "server": "tsx src/server/main.ts"
   },
   "dependencies": {
     "@duckdb/node-api": "^1.5.4-r.1"
