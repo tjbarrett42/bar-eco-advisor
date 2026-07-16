@@ -1,5 +1,7 @@
-import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { withDuck } from "../store/duck.js";
 import { STATIC_DEFS } from "./schema.js";
 
@@ -107,20 +109,21 @@ export async function generateStore(destDir: string, opts: GenOpts = {}): Promis
   return { storeDir: destDir, gameId: GAME_ID, defHash: DEF_HASH, frames, teamIds, allyTeams };
 }
 
-// Build a UNION ALL SELECT from JS rows and COPY to Parquet. Rows must share keys.
+// Bulk-load rows to Parquet via a temporary NDJSON file. O(n) in data size, not SQL text.
 async function copyRows(
   db: { run: (sql: string) => Promise<void> },
   rows: Record<string, number | string>[],
   outPath: string
 ): Promise<void> {
   if (rows.length === 0) return;
-  const cols = Object.keys(rows[0]);
-  const selects = rows.map((row) => {
-    const vals = cols.map((c) => {
-      const v = row[c];
-      return typeof v === "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`;
-    });
-    return `SELECT ${vals.map((v, i) => `${v} AS ${cols[i]}`).join(", ")}`;
-  });
-  await db.run(`COPY (${selects.join(" UNION ALL ")}) TO '${outPath}' (FORMAT parquet)`);
+  const tmpFile = join(tmpdir(), `bar-gen-${randomUUID()}.ndjson`);
+  try {
+    const ndjson = rows.map((row) => JSON.stringify(row)).join("\n");
+    writeFileSync(tmpFile, ndjson, "utf8");
+    await db.run(
+      `COPY (SELECT * FROM read_json('${tmpFile}', format='newline_delimited')) TO '${outPath}' (FORMAT parquet)`
+    );
+  } finally {
+    try { unlinkSync(tmpFile); } catch { /* ignore if already gone */ }
+  }
 }
