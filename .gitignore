@@ -6,3 +6,6 @@ dist/
 # Received Parquet stores (data artifacts, not source)
 data/store/
 data/scratch/
+web/node_modules
+web/dist
+data/
