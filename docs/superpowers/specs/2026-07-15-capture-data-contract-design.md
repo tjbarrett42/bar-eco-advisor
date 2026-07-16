@@ -97,7 +97,8 @@ give/take; `commandId` + `commandTarget` for command changes; `workerTask`
 each of metal/energy the full `GetTeamResources` tuple —
 `{current, income, expense, storage, pull, share, sent, received, excess}` —
 prefixed `m_`/`e_`; plus BAR economy rules params (`overdrive_metal`,
-`grid_energy`, extensible per profile) and a cumulative snapshot from
+`grid_energy`, and the metal-converter set `mm_level`, `mm_capacity`, `mm_use`,
+`mm_avg_effi` — see addendum below; extensible per profile) and a cumulative snapshot from
 `GetTeamStatsHistory` (`metalProduced`, `metalUsed`, `energyProduced`,
 `energyUsed`, `damageDealt`, `damageReceived`, `unitsProduced`, `unitsKilled`,
 `unitsDied`).
@@ -105,6 +106,38 @@ prefixed `m_`/`e_`; plus BAR economy rules params (`overdrive_metal`,
 **`feature_frames`** (on-change: at feature birth and when reclaim state
 changes): `game_id`, `frame`, `featureId`, `featureDefName`, `x`, `z`,
 `metalRemaining`, `energyRemaining`, `reclaimLeft`.
+
+### Addendum 2026-07-16 — metal-converter economy params (profile v1)
+
+Adds four per-team-frame rules params so converter behaviour is captured
+**directly** rather than reconstructed from unit-level `energyUse`/`metalMake`:
+
+- `mm_level` — the team's converter reserve slider (`mmLevel`, 0–1, default
+  0.75). Converters only convert energy **above `e_storage * mm_level`**.
+- `mm_capacity` — total team converter capacity (`mmCapacity`), the ceiling on
+  energy convertible per second.
+- `mm_use` — energy actually converted per second (`mmUse`).
+- `mm_avg_effi` — average energy→metal efficiency across active converters
+  (`mmAvgEffi`).
+
+**Source basis.** Verified against BAR's `game_energy_conversion.lua`: each team
+is processed every 15 sim frames; `convertAmount = eCur - eStor * mmLevel` is
+distributed across converters best-efficiency-first, each capped at its own
+`energyconv_capacity`. Consequence for analysis: converters consume only
+excess energy above the reserve line (they do **not** compete with builders via
+proration), so optimal converter capacity ≈ sustained excess-energy income, and
+energy **storage** size shifts the reserve line. The companion build-power
+relation (`metal/s = metalCost * BP / buildTime`) is verified against the Recoil
+engine's `CUnit::AddBuildPower`; the engine logs unmet demand to `resPull`, so
+`pull - expense` is the canonical stall signal (no schema change needed — both
+already captured).
+
+**Beta status.** These params and the mechanics they encode are **provisional,
+pending first real captures.** If baked data is surprisingly inconsistent with
+this reading (e.g. `mm_use` not matching the excess-above-reserve model, or
+conservation residuals not closing), revisit this addendum and the source
+analysis before building metrics on top of it. Treat as a hypothesis to
+validate, not settled fact.
 
 ### Deliberately excluded
 
