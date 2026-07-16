@@ -38,4 +38,11 @@ describe("querySeries", () => {
     expect(keys.players).toEqual(r.teamIds);
     expect(keys.sides).toEqual([0, 1]);
   });
+
+  it("rejects with 'unknown game' error for a nonexistent game id", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "q4-"));
+    await expect(
+      querySeries(dir, "does-not-exist", { metricIds: ["m_income"] })
+    ).rejects.toThrow(/unknown game/);
+  });
 });

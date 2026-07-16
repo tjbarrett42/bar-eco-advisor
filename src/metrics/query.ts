@@ -11,7 +11,8 @@ export type QueryOpts = {
 // Register per-game Parquet files as named views the registry SQL references.
 async function registerViews(db: Duck, storeDir: string, gameId: string): Promise<void> {
   const prov = await readProvenance(storeDir, gameId);
-  const defHash = String(prov?.def_hash ?? "");
+  if (prov == null || !prov.def_hash) throw new Error(`unknown game: ${gameId}`);
+  const defHash = String(prov.def_hash);
   const view = (name: string, path: string) =>
     db.run(`CREATE OR REPLACE VIEW ${name} AS SELECT * FROM read_parquet('${path}')`);
   await view("team_frames", tablePath(storeDir, gameId, "team_frames"));
@@ -41,7 +42,10 @@ export async function querySeries(
       const byKey = new Map<number, Point[]>();
       for (const row of rows) {
         const k = Number(row.key);
-        const pt: Point = [Number(row.frame), Number(row.value)];
+        const raw = row.value;
+        const num = raw == null ? null : Number(raw);
+        const value: number | null = (num != null && Number.isFinite(num)) ? num : null;
+        const pt: Point = [Number(row.frame), value];
         (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(pt);
       }
       for (const [key, points] of byKey)
