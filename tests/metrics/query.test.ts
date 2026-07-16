@@ -46,3 +46,25 @@ describe("querySeries", () => {
     ).rejects.toThrow(/unknown game/);
   });
 });
+
+describe("querySeries — per-metric isolation", () => {
+  it("skips metrics whose columns are missing from the store instead of rejecting", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "q4-"));
+    const r = await generateStore(dir, { frames: 30, players: 1 });
+    // simulate an older capture profile: rewrite team_frames without mm_* columns
+    const { withDuck } = await import("../../src/store/duck.js");
+    const tf = resolve(r.storeDir, r.gameId, "team_frames.parquet");
+    await withDuck(async (db) => {
+      await db.run(`CREATE TABLE t AS SELECT * EXCLUDE (mm_level, mm_capacity, mm_use, mm_avg_effi) FROM read_parquet('${tf}')`);
+      await db.run(`COPY t TO '${tf}' (FORMAT parquet)`);
+    });
+
+    const series = await querySeries(r.storeDir, r.gameId, {
+      metricIds: ["m_income", "mm_use", "converter_uptime"], keys: [r.teamIds[0]],
+    });
+    const ids = series.map((s) => s.metricId);
+    expect(ids).toContain("m_income");
+    expect(ids).not.toContain("mm_use");
+    expect(ids).not.toContain("converter_uptime");
+  });
+});

@@ -36,9 +36,17 @@ export async function querySeries(
       if (opts.from != null) filters.push(`frame >= ${Number(opts.from)}`);
       if (opts.to != null) filters.push(`frame <= ${Number(opts.to)}`);
       const where = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
-      const rows = await db.rows(
-        `SELECT frame, key, value FROM (${metric.sql}) sub ${where} ORDER BY key, frame`
-      );
+      let rows: Record<string, unknown>[];
+      try {
+        rows = await db.rows(
+          `SELECT frame, key, value FROM (${metric.sql}) sub ${where} ORDER BY key, frame`
+        );
+      } catch (err) {
+        // Older capture profiles may lack columns a metric needs (e.g. mm_* pre-addendum).
+        // Skip that metric rather than failing the whole request.
+        console.warn(`metric ${id} skipped for ${gameId}: ${err instanceof Error ? err.message.split("\n")[0] : err}`);
+        continue;
+      }
       const byKey = new Map<number, Point[]>();
       for (const row of rows) {
         const k = Number(row.key);
