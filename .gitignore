@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.superpowers/
+.claude/settings.local.json
+
+# Received Parquet stores (data artifacts, not source)
+data/store/
+data/scratch/
