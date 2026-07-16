@@ -3,6 +3,9 @@ import { resolve } from "node:path";
 import { withDuck } from "../store/duck.js";
 import { STATIC_DEFS } from "./schema.js";
 
+// Each team builds this sequence; each entry becomes one unit built over a window.
+const BUILD_SEQUENCE = ["armmex", "armsolar", "armck", "armmakr", "armnanotc", "armpw", "armllt", "armalab"];
+
 export type GenOpts = { frames?: number; players?: number };
 export type GenResult = {
   storeDir: string; gameId: string; defHash: string;
@@ -59,6 +62,36 @@ export async function generateStore(destDir: string, opts: GenOpts = {}): Promis
     for (let f = 0; f < frames; f++)
       tfRows.push(teamFrameRow(teamId, teamAlly[teamId], f));
 
+  const unitRows: Record<string, number | string>[] = [];
+  const ufRows: Record<string, number | string>[] = [];
+  let unitId = 1000;
+  for (const teamId of teamIds) {
+    let cursor = 5; // first build starts at frame 5
+    for (const defName of BUILD_SEQUENCE) {
+      const def = STATIC_DEFS.find((d) => d.unitDefName === defName)!;
+      const buildFrames = Math.max(1, Math.round(def.buildTime / 100)); // compressed for synthetic
+      const born = cursor;
+      const done = Math.min(frames - 1, born + buildFrames);
+      unitRows.push({
+        game_id: GAME_ID, unitId, unitDefName: defName,
+        teamId, allyTeam: teamAlly[teamId], bornFrame: born,
+      });
+      for (let f = born; f < frames; f++) {
+        const beingBuilt = f < done ? 1 : 0;
+        const progress = f < done ? (f - born) / (done - born || 1) : 1;
+        ufRows.push({
+          game_id: GAME_ID, frame: f, unitId, teamId,
+          buildProgress: Number(progress.toFixed(4)),
+          currentBuildPower: beingBuilt ? 100 : 0,
+          isActive: beingBuilt ? 0 : 1,
+          beingBuilt,
+        });
+      }
+      cursor = done + 2;
+      unitId++;
+    }
+  }
+
   await withDuck(async (db) => {
     await copyRows(db, tfRows, resolve(gameDir, "team_frames.parquet"));
     await copyRows(db, [{
@@ -67,6 +100,8 @@ export async function generateStore(destDir: string, opts: GenOpts = {}): Promis
     }], resolve(gameDir, "games.parquet"));
     await copyRows(db, STATIC_DEFS.map((d) => ({ def_hash: DEF_HASH, ...d })),
       resolve(staticDir, `${DEF_HASH}.parquet`));
+    await copyRows(db, unitRows, resolve(gameDir, "units.parquet"));
+    await copyRows(db, ufRows, resolve(gameDir, "unit_frames.parquet"));
   });
 
   return { storeDir: destDir, gameId: GAME_ID, defHash: DEF_HASH, frames, teamIds, allyTeams };
