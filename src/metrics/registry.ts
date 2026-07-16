@@ -79,6 +79,20 @@ REGISTRY.push(
   allocMetric("bp", "Metal → build power"),
   allocMetric("army", "Metal → army"),
   allocMetric("defense", "Metal → defense"),
+  { id: "obp", label: "On-base % (resource fundamentals)", unit: "fraction",
+    grain: "player", kind: "derived",
+    // Cumulative fraction of frames where all four resource fundamentals hold:
+    // no metal stall, no energy stall, no metal overflow, no energy overflow.
+    sql: `
+      SELECT frame, teamId AS key,
+             AVG(CASE WHEN (m_pull - m_expense) <= 0.1
+                       AND (e_pull - e_expense) <= 0.1
+                       AND m_excess <= 0.1
+                       AND e_excess <= 0.1
+                      THEN 1.0 ELSE 0.0 END)
+               OVER (PARTITION BY teamId ORDER BY frame
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
+      FROM team_frames` },
 );
 
 export function getMetric(id: string): Metric | undefined {
