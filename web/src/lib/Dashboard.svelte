@@ -6,6 +6,7 @@
 
   export let game: string;
   export let keys: number[] = [];
+  export let labels: Record<number, string> = {};
 
   let panelSeries: Record<string, Series[]> = {};
 
@@ -25,7 +26,7 @@
 <div class="grid">
   {#each DASHBOARDS as panel}
     <section>
-      <Chart series={panelSeries[panel.title] ?? []} title={panel.title} />
+      <Chart series={panelSeries[panel.title] ?? []} title={panel.title} {labels} />
       {#if panel.note}<p class="note">{panel.note}</p>{/if}
     </section>
   {/each}

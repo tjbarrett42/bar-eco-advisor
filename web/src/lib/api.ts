@@ -2,8 +2,22 @@ export type MetricMeta = {
   id: string; label: string; unit: string;
   grain: "player" | "side"; kind: "raw" | "derived";
 };
-export type Series = { metricId: string; key: number; unit: string; points: [number, number][] };
-export type Provenance = { game_id: string; map?: string; duration_frames?: number };
+export type Series = { metricId: string; key: number; unit: string; points: [number, number | null][] };
+export type Provenance = { game_id: string; map?: string; duration_frames?: number; teams?: string };
+export type TeamInfo = { teamId: number; player: string; allyTeam: number };
+
+/** Parse the provenance `teams` JSON; [] if absent/malformed. Sorted side, then team. */
+export function parseTeams(prov: Provenance | undefined): TeamInfo[] {
+  if (!prov?.teams) return [];
+  try {
+    const arr = JSON.parse(prov.teams) as { teamId: number; player?: string; allyTeam: number }[];
+    return arr
+      .map((t) => ({ teamId: Number(t.teamId), player: t.player ?? "", allyTeam: Number(t.allyTeam) }))
+      .sort((a, b) => a.allyTeam - b.allyTeam || a.teamId - b.teamId);
+  } catch {
+    return [];
+  }
+}
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
