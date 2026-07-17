@@ -101,18 +101,26 @@ const OBP_CTES = `
     JOIN units u ON u.unitId = uf.unitId
     JOIN static_defs sd ON sd.unitDefName = u.unitDefName
     WHERE sd.buildPower > 0 AND uf.beingBuilt = 0
+    GROUP BY uf.frame, uf.teamId),
+  conv AS (
+    SELECT uf.frame, uf.teamId, SUM(uf.energyUse) AS conv_use
+    FROM unit_frames uf
+    JOIN units u ON u.unitId = uf.unitId
+    JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+    WHERE sd.energyConvCapacity > 0 AND uf.beingBuilt = 0
     GROUP BY uf.frame, uf.teamId)`;
 
 // idle-BP violation: build power mostly idle while metal piles in the bank
 const IDLE_BP = `(COALESCE(bp.util, 1) < 0.35 AND tf.m_current > 0.25 * tf.m_storage)`;
 
-// capacity violation: not enough build power to spend metal income at the
-// guide density (200 BP per 5 m/s, i.e. 40 BP per m/s; energy term omitted —
-// converter draw needs no BP and mm_use isn't captured yet)
-const BP_CAPACITY = `(COALESCE(bp.bp_total, 0) < 40 * tf.m_income)`;
+// capacity violation: not enough build power to spend income at the guide
+// densities (40 BP per m/s, 2 BP per e/s) — energy net of converter draw,
+// which consumes energy without needing any build power
+const BP_CAPACITY = `(COALESCE(bp.bp_total, 0) <
+  GREATEST(40 * tf.m_income, 2 * (tf.e_income - COALESCE(conv.conv_use, 0))))`;
 
 REGISTRY.push(
-  { id: "obp", label: "On-base % (v3: alive-gated, idle-BP, BP capacity)", unit: "fraction",
+  { id: "obp", label: "On-base % (v3.1: alive-gated, idle-BP, full BP capacity)", unit: "fraction",
     grain: "player", kind: "derived",
     // Cumulative fraction of ALIVE frames where all five fundamentals hold: no
     // metal/energy stall, no metal/energy overflow, and no idle build power
@@ -131,6 +139,7 @@ REGISTRY.push(
       FROM team_frames tf
       JOIN alive a ON a.teamId = tf.teamId
       LEFT JOIN bp ON bp.frame = tf.frame AND bp.teamId = tf.teamId
+      LEFT JOIN conv ON conv.frame = tf.frame AND conv.teamId = tf.teamId
       WHERE tf.frame <= a.lastf` },
 );
 
@@ -152,6 +161,7 @@ function obpLeak(id: string, label: string, cond: string): Metric {
       FROM team_frames tf
       JOIN alive a ON a.teamId = tf.teamId
       LEFT JOIN bp ON bp.frame = tf.frame AND bp.teamId = tf.teamId
+      LEFT JOIN conv ON conv.frame = tf.frame AND conv.teamId = tf.teamId
       WHERE tf.frame <= a.lastf`,
   };
 }
