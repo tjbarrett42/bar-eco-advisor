@@ -2,9 +2,10 @@
   import { onMount } from "svelte";
   import Dashboard from "./lib/Dashboard.svelte";
   import Explorer from "./lib/Explorer.svelte";
+  import Ternary from "./lib/Ternary.svelte";
   import { fetchGames, fetchKeys, parseTeams, type Provenance, type TeamInfo } from "./lib/api.js";
 
-  let tab: "dashboard" | "explorer" = "dashboard";
+  let tab: "dashboard" | "explorer" | "ternary" = "dashboard";
   let games: Provenance[] = [];
   let game = "";
   let teams: TeamInfo[] = [];
@@ -56,6 +57,7 @@
   <nav>
     <button class:active={tab === "dashboard"} on:click={() => (tab = "dashboard")}>Dashboard</button>
     <button class:active={tab === "explorer"} on:click={() => (tab = "explorer")}>Explorer</button>
+    <button class:active={tab === "ternary"} on:click={() => (tab = "ternary")}>Ratio Triangle</button>
   </nav>
   <label class="game">Game:
     <select bind:value={game} on:change={onGame}>
@@ -64,7 +66,7 @@
   </label>
 </header>
 
-{#if tab === "dashboard"}
+{#if tab !== "explorer"}
   <fieldset class="players">
     <legend>Players
       <button class="mini" on:click={() => setAll(teams.map((t) => t.teamId), true)}>all</button>
@@ -80,7 +82,11 @@
       </label>
     {/each}
   </fieldset>
-  <Dashboard {game} {keys} {labels} {colors} />
+  {#if tab === "dashboard"}
+    <Dashboard {game} {keys} {labels} {colors} />
+  {:else}
+    <Ternary {game} {keys} {labels} {colors} />
+  {/if}
 {:else}
   <Explorer />
 {/if}
