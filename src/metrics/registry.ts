@@ -193,6 +193,44 @@ REGISTRY.push({
     WHERE tf.frame <= a.lastf`,
 });
 
+// Guide-ratio geometry (200 BP : 5 m/s : 100 e/s). Each leg is normalized by
+// its guide weight using EFFECTIVE quantities (metal net of overflow; energy
+// net of overflow and converter draw, which needs no BP). Scale-invariant:
+// shares live on a 2-simplex where (1/3, 1/3, 1/3) = perfectly on-ratio.
+const RATIO_LEGS = `
+      COALESCE(bp.bp_total, 0) / 200.0 AS leg_b,
+      GREATEST(tf.m_income - tf.m_excess, 0) / 5.0 AS leg_m,
+      GREATEST(tf.e_income - tf.e_excess - COALESCE(conv.conv_use, 0), 0) / 100.0 AS leg_e`;
+
+function ratioMetric(id: string, label: string, expr: string): Metric {
+  return {
+    id, label, unit: "fraction", grain: "player", kind: "derived",
+    sql: `${OBP_CTES},
+      legs AS (
+        SELECT tf.frame, tf.teamId, ${RATIO_LEGS}
+        FROM team_frames tf
+        JOIN alive a ON a.teamId = tf.teamId
+        LEFT JOIN bp ON bp.frame = tf.frame AND bp.teamId = tf.teamId
+        LEFT JOIN conv ON conv.frame = tf.frame AND conv.teamId = tf.teamId
+        WHERE tf.frame <= a.lastf)
+      SELECT frame, teamId AS key,
+             AVG(${expr}) OVER (PARTITION BY teamId ORDER BY frame
+                                ROWS BETWEEN 150 PRECEDING AND CURRENT ROW) AS value
+      FROM legs`,
+  };
+}
+
+REGISTRY.push(
+  ratioMetric("ratio_balance", "Guide-ratio balance (min/max leg)",
+    "LEAST(leg_b, leg_m, leg_e) / NULLIF(GREATEST(leg_b, leg_m, leg_e), 0)"),
+  ratioMetric("ratio_share_bp", "Ratio share: build power",
+    "leg_b / NULLIF(leg_b + leg_m + leg_e, 0)"),
+  ratioMetric("ratio_share_m", "Ratio share: metal",
+    "leg_m / NULLIF(leg_b + leg_m + leg_e, 0)"),
+  ratioMetric("ratio_share_e", "Ratio share: energy",
+    "leg_e / NULLIF(leg_b + leg_m + leg_e, 0)"),
+);
+
 // Map metal ownership: extraction income per player, split by tier so T2
 // (mohos) can render as a darker shade of the same player hue.
 function extraction(id: string, tier: string, label: string): Metric {
