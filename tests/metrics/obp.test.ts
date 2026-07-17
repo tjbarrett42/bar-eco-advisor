@@ -46,3 +46,31 @@ describe("obp metric", () => {
     expect(panel!.note).toMatch(/beta/i);
   });
 });
+
+describe("obp component leak metrics", () => {
+  it("registers four cumulative leak metrics", () => {
+    for (const id of ["obp_stall_m", "obp_stall_e", "obp_waste_m", "obp_waste_e"]) {
+      const m = getMetric(id);
+      expect(m, id).toBeDefined();
+      expect(m!.kind).toBe("derived");
+      expect(m!.unit).toBe("fraction");
+    }
+  });
+
+  it("leak fractions stay in [0,1] and the stall window shows up in obp_stall_m", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "obpl-"));
+    const r = await generateStore(dir, { frames: 600, players: 1 });
+    const series = await querySeries(r.storeDir, r.gameId, {
+      metricIds: ["obp_stall_m"], keys: [r.teamIds[0]], maxPoints: 600,
+    });
+    const pts = series[0].points;
+    for (const [, v] of pts) { expect(v).not.toBeNull(); expect(v!).toBeGreaterThanOrEqual(0); expect(v!).toBeLessThanOrEqual(1); }
+    expect(pts[0][1]).toBe(0);            // clean at frame 0
+    expect(pts.at(-1)![1]).toBeGreaterThan(0); // generator's 12-15s stall window leaks
+  });
+
+  it("has an OBP breakdown dashboard panel", () => {
+    const panel = DASHBOARDS.find((p) => p.metricIds.includes("obp_stall_m"));
+    expect(panel).toBeDefined();
+  });
+});

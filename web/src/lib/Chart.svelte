@@ -6,6 +6,7 @@
   export let series: Series[] = [];
   export let title = "";
   export let labels: Record<number, string> = {};
+  export let height = 260;
 
   let el: HTMLDivElement;
   let plot: uPlot | undefined;
@@ -37,7 +38,7 @@
     // one y-scale per measurement unit; first unit gets the left axis, second the right
     const units = Array.from(new Set(series.map((s) => s.unit)));
     const opts: uPlot.Options = {
-      title, width: el.clientWidth || 640, height: 260,
+      title, width: el.clientWidth || 640, height,
       scales: { x: { time: false } },
       axes: [
         { values: (_u: uPlot, vals: number[]) => vals.map(fmtClock) },
@@ -52,6 +53,9 @@
           label: `${s.metricId} · ${labels[s.key] ?? `t${s.key}`}`,
           stroke: COLORS[i % COLORS.length], width: 1.5,
           scale: s.unit,
+          // each series is downsampled on its own frame grid, so the union
+          // x-axis leaves alignment holes — span them instead of drawing gaps
+          spanGaps: true,
         })),
       ],
     };

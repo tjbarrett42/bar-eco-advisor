@@ -95,6 +95,26 @@ REGISTRY.push(
       FROM team_frames` },
 );
 
+// One OBP leak component: cumulative fraction of frames VIOLATING `cond`.
+function obpLeak(id: string, label: string, cond: string): Metric {
+  return {
+    id, label, unit: "fraction", grain: "player", kind: "derived",
+    sql: `
+      SELECT frame, teamId AS key,
+             AVG(CASE WHEN ${cond} THEN 1.0 ELSE 0.0 END)
+               OVER (PARTITION BY teamId ORDER BY frame
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
+      FROM team_frames`,
+  };
+}
+
+REGISTRY.push(
+  obpLeak("obp_stall_m", "OBP leak: metal stall", "(m_pull - m_expense) > 0.1"),
+  obpLeak("obp_stall_e", "OBP leak: energy stall", "(e_pull - e_expense) > 0.1"),
+  obpLeak("obp_waste_m", "OBP leak: metal overflow", "m_excess > 0.1"),
+  obpLeak("obp_waste_e", "OBP leak: energy overflow", "e_excess > 0.1"),
+);
+
 export function getMetric(id: string): Metric | undefined {
   return REGISTRY.find((m) => m.id === id);
 }
