@@ -11,6 +11,8 @@ export const DASHBOARDS: DashboardPanel[] = [
     note: "Beta: resource-fundamentals subset (no stall, no overflow). Com/factory idleness, spot claims, and intel freshness pending real data + map inputs." },
   { title: "OBP Breakdown", metricIds: ["obp", "obp_stall_m", "obp_stall_e", "obp_waste_m", "obp_waste_e", "obp_idle_bp", "obp_bp_capacity"],
     note: "OBP v3: alive-gated (dead frames excluded) with six components (incl. idle-BP and BP-capacity vs the guide ratio: max(40×m_income, 2×(e_income − converter draw))) — the leak curves are cumulative violation fractions (best viewed one player at a time)." },
+  { title: "Build Power", metricIds: ["bp_available", "bp_used", "bp_used_eco", "bp_used_bp", "bp_used_army", "bp_used_defense"],
+    note: "Available vs applied BP (same unit, one scale; used-series smoothed over 5s). The role suboptions split applied BP by what it was building — toggle via the Variables strip. Repairs/assist after completion not counted. build_power_util is the normalized (0-1) version." },
   { title: "Map Metal Ownership", metricIds: ["extraction_t1", "extraction_t2"],
     note: "Metal extracted from map spots per player — one hue per player, darker shade = T2 mohos. The map-control war, in income terms." },
   { title: "Survival & Income", metricIds: ["units_alive", "m_income"],

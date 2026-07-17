@@ -216,6 +216,52 @@ REGISTRY.push(
   convRec("mm_capacity_rec", "SUM(sd.energyConvCapacity)", "Converter capacity (reconstructed)"),
 );
 
+// Build power actually applied, in BP units: the engine gives
+// dProgress/frame = BP_applied / (30 * buildTime), so BP_applied =
+// dProgress * buildTime * 30. Smoothed with a 5s (150-frame) trailing window
+// because per-frame application is spiky. Optional role filter splits by the
+// TARGET's role (what the BP was spent building).
+function bpUsed(id: string, label: string, roleFilter?: string): Metric {
+  const where = roleFilter ? `WHERE role = '${roleFilter}'` : "";
+  return {
+    id, label, unit: "BP", grain: "player", kind: "derived",
+    sql: `
+      WITH steps AS (
+        SELECT uf.frame, uf.teamId,
+               (uf.buildProgress - LAG(uf.buildProgress)
+                  OVER (PARTITION BY uf.unitId ORDER BY uf.frame)) * sd.buildTime * 30 AS bp_applied,
+               ${ROLE_CASE} AS role
+        FROM unit_frames uf
+        JOIN units u ON u.unitId = uf.unitId
+        JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+        WHERE uf.beingBuilt = 1),
+      perframe AS (
+        SELECT frame, teamId, COALESCE(SUM(bp_applied), 0) AS bp
+        FROM steps ${where ? where + " AND bp_applied > 0" : "WHERE bp_applied > 0"}
+        GROUP BY frame, teamId)
+      SELECT frame, teamId AS key,
+             AVG(bp) OVER (PARTITION BY teamId ORDER BY frame
+                           ROWS BETWEEN 150 PRECEDING AND CURRENT ROW) AS value
+      FROM perframe`,
+  };
+}
+
+REGISTRY.push(
+  { id: "bp_available", label: "Build power available", unit: "BP", grain: "player", kind: "derived",
+    sql: `
+      SELECT uf.frame, uf.teamId AS key, SUM(sd.buildPower) AS value
+      FROM unit_frames uf
+      JOIN units u ON u.unitId = uf.unitId
+      JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+      WHERE sd.buildPower > 0 AND uf.beingBuilt = 0
+      GROUP BY uf.frame, uf.teamId` },
+  bpUsed("bp_used", "Build power in use (5s avg)"),
+  bpUsed("bp_used_eco", "BP → economy (5s avg)", "eco"),
+  bpUsed("bp_used_bp", "BP → build power (5s avg)", "bp"),
+  bpUsed("bp_used_army", "BP → army (5s avg)", "army"),
+  bpUsed("bp_used_defense", "BP → defense (5s avg)", "defense"),
+);
+
 export function getMetric(id: string): Metric | undefined {
   return REGISTRY.find((m) => m.id === id);
 }
