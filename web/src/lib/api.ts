@@ -4,15 +4,15 @@ export type MetricMeta = {
 };
 export type Series = { metricId: string; key: number; unit: string; points: [number, number | null][] };
 export type Provenance = { game_id: string; map?: string; duration_frames?: number; teams?: string };
-export type TeamInfo = { teamId: number; player: string; allyTeam: number };
+export type TeamInfo = { teamId: number; player: string; allyTeam: number; color?: string };
 
 /** Parse the provenance `teams` JSON; [] if absent/malformed. Sorted side, then team. */
 export function parseTeams(prov: Provenance | undefined): TeamInfo[] {
   if (!prov?.teams) return [];
   try {
-    const arr = JSON.parse(prov.teams) as { teamId: number; player?: string; allyTeam: number }[];
+    const arr = JSON.parse(prov.teams) as { teamId: number; player?: string; allyTeam: number; color?: string }[];
     return arr
-      .map((t) => ({ teamId: Number(t.teamId), player: t.player ?? "", allyTeam: Number(t.allyTeam) }))
+      .map((t) => ({ teamId: Number(t.teamId), player: t.player ?? "", allyTeam: Number(t.allyTeam), color: t.color }))
       .sort((a, b) => a.allyTeam - b.allyTeam || a.teamId - b.teamId);
   } catch {
     return [];

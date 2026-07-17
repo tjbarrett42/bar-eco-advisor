@@ -6,6 +6,7 @@
   export let game: string;
   export let keys: number[] = [];           // visible players (pure visibility — no refetch)
   export let labels: Record<number, string> = {};
+  export let colors: Record<number, string> = {};
 
   let open = true;
   let selected: string = DASHBOARDS[0].title;
@@ -69,7 +70,7 @@
       <button class="mini" on:click={() => setAllMetrics(true)}>all</button>
       <button class="mini" on:click={() => setAllMetrics(false)}>none</button>
     </div>
-    <Chart series={visible} title={panel.title} {labels} height={480} />
+    <Chart series={visible} title={panel.title} {labels} {colors} height={480} />
     {#if loading}<p class="loading">loading…</p>{/if}
     {#if !loading && keys.length === 0}<p class="loading">no players selected — data stays cached, pick players above</p>{/if}
     {#if panel.note}<p class="note">{panel.note}</p>{/if}

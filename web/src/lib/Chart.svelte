@@ -6,6 +6,7 @@
   export let series: Series[] = [];
   export let title = "";
   export let labels: Record<number, string> = {};
+  export let colors: Record<number, string> = {};
   export let height = 260;
 
   let el: HTMLDivElement;
@@ -31,7 +32,7 @@
 
   function colorFor(s: Series): string {
     const keys = Array.from(new Set(series.map((x) => x.key)));
-    const base = COLORS[keys.indexOf(s.key) % COLORS.length];
+    const base = colors[s.key] ?? COLORS[keys.indexOf(s.key) % COLORS.length];
     const metricIdx = Array.from(new Set(series.filter((x) => x.key === s.key).map((x) => x.metricId)))
       .indexOf(s.metricId);
     return metricIdx > 0 ? shade(base, Math.max(0.35, 1 - 0.3 * metricIdx)) : base;
@@ -160,7 +161,7 @@
 
   onMount(render);
   onDestroy(() => plot?.destroy());
-  $: if (el) { series; labels; render(); }
+  $: if (el) { series; labels; colors; render(); }
 </script>
 
 <div class="wrap">

@@ -10,6 +10,7 @@
   let teams: TeamInfo[] = [];
   let keys: number[] = [];
   let labels: Record<number, string> = {};
+  let colors: Record<number, string> = {};
 
   onMount(async () => {
     games = await fetchGames();
@@ -29,6 +30,7 @@
       teams = k.players.map((teamId) => ({ teamId, player: "", allyTeam: 0 }));
     }
     labels = Object.fromEntries(teams.map((t) => [t.teamId, t.player || `t${t.teamId}`]));
+    colors = Object.fromEntries(teams.flatMap((t) => (t.color ? [[t.teamId, t.color] as [number, string]] : [])));
     const named = teams.filter((t) => t.player);
     keys = (named.length ? named : teams).slice(0, 2).map((t) => t.teamId);
   }
@@ -71,13 +73,14 @@
       <button class="mini s1" on:click={() => setAll(sideIds(1), keys.filter((k) => sideIds(1).includes(k)).length === 0)}>side 1</button>
     </legend>
     {#each teams as t (t.teamId)}
-      <label class="chip" class:side1={t.allyTeam === 1}>
+      <label class="chip" class:side1={t.allyTeam === 1}
+             style={t.color ? `border-left: 3px solid ${t.color}` : ""}>
         <input type="checkbox" checked={keys.includes(t.teamId)} on:change={() => toggle(t.teamId)} />
         {t.player || `t${t.teamId}`}<span class="side">s{t.allyTeam}</span>
       </label>
     {/each}
   </fieldset>
-  <Dashboard {game} {keys} {labels} />
+  <Dashboard {game} {keys} {labels} {colors} />
 {:else}
   <Explorer />
 {/if}
