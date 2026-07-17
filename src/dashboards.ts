@@ -2,7 +2,8 @@ export type DashboardPanel = { title: string; metricIds: string[]; note?: string
 
 export const DASHBOARDS: DashboardPanel[] = [
   { title: "Eco Overview", metricIds: ["m_income", "e_income", "m_excess", "e_excess"] },
-  { title: "Stall & Build Power", metricIds: ["metal_stall", "energy_stall", "build_power_util"] },
+  { title: "Stall & Build Power", metricIds: ["metal_stall", "energy_stall", "build_power_util", "stall_sync"],
+    note: "stall_sync: running corr of metal-stall vs energy-stall — near 1.0 means stalls are synchronized all-in investment dips (elite pattern); low means one-sided drift. Undefined (gap) until the first stall." },
   { title: "Allocation (eco vs army)", metricIds: ["alloc_eco", "alloc_bp", "alloc_army", "alloc_defense"],
     note: "Beta: role bucketing not yet validated against real captures." },
   { title: "Converter", metricIds: ["mm_use", "mm_capacity", "mm_use_rec", "mm_capacity_rec", "e_excess"],

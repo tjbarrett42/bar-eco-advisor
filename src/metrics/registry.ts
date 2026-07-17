@@ -175,6 +175,24 @@ REGISTRY.push(
   obpLeak("obp_bp_capacity", "OBP leak: BP under guide ratio", BP_CAPACITY),
 );
 
+REGISTRY.push({
+  id: "stall_sync", label: "Stall sync (cum. corr m-stall vs e-stall)", unit: "fraction",
+  grain: "player", kind: "derived",
+  // Running correlation between metal-stall and energy-stall indicators.
+  // ~1.0 = stalls are synchronized both-resource all-ins (deliberate
+  // investment dips); low/divergent = one-sided drift (mismanagement).
+  sql: `
+    WITH alive AS (SELECT teamId, MAX(frame) AS lastf FROM unit_frames GROUP BY teamId)
+    SELECT tf.frame, tf.teamId AS key,
+           CORR(CASE WHEN tf.m_pull - tf.m_expense > 0.1 THEN 1.0 ELSE 0.0 END,
+                CASE WHEN tf.e_pull - tf.e_expense > 0.1 THEN 1.0 ELSE 0.0 END)
+             OVER (PARTITION BY tf.teamId ORDER BY tf.frame
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
+    FROM team_frames tf
+    JOIN alive a ON a.teamId = tf.teamId
+    WHERE tf.frame <= a.lastf`,
+});
+
 // Map metal ownership: extraction income per player, split by tier so T2
 // (mohos) can render as a darker shade of the same player hue.
 function extraction(id: string, tier: string, label: string): Metric {
