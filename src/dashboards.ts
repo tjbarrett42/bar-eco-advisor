@@ -15,7 +15,7 @@ export const DASHBOARDS: DashboardPanel[] = [
   { title: "Build Power", metricIds: ["bp_available", "bp_used", "bp_used_eco", "bp_used_bp", "bp_used_army", "bp_used_defense"],
     note: "Available vs applied BP (same unit, one scale; used-series smoothed over 5s). The role suboptions split applied BP by what it was building — toggle via the Variables strip. Repairs/assist after completion not counted. build_power_util is the normalized (0-1) version." },
   { title: "Guide Ratio", metricIds: ["ratio_balance", "ratio_share_bp", "ratio_share_m", "ratio_share_e"],
-    note: "Closeness to the 200 BP : 5 m/s : 100 e/s guide ratio, scale-free. Shares sum to 1 (0.333 each = on-ratio; the leading share is your over-provisioned leg). ratio_balance = weakest/strongest leg (1.0 = perfect). Legs use effective values: metal net of overflow, energy net of overflow + converter draw. 5s smoothed." },
+    note: "Closeness to the 200 BP : 5 m/s : 100 e/s guide ratio, scale-free. Shares sum to 1 (0.333 each = on-ratio; the leading share is your over-provisioned leg). ratio_balance = weakest/strongest leg (1.0 = perfect). Legs are realized flows: APPLIED build power (not parked capacity), metal net of overflow, energy net of overflow + converter draw. 5s smoothed." },
   { title: "Map Metal Ownership", metricIds: ["extraction_t1", "extraction_t2"],
     note: "Metal extracted from map spots per player — one hue per player, darker shade = T2 mohos. The map-control war, in income terms." },
   { title: "Survival & Income", metricIds: ["units_alive", "m_income"],

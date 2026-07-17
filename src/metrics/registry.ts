@@ -193,12 +193,14 @@ REGISTRY.push({
     WHERE tf.frame <= a.lastf`,
 });
 
-// Guide-ratio geometry (200 BP : 5 m/s : 100 e/s). Each leg is normalized by
+// Guide-ratio geometry (200 BP : 5 m/s : 100 e/s). BP leg uses APPLIED build
+// power (a realized flow, like the incomes) — parked idle BP reads off-ratio.
+// Each leg is normalized by
 // its guide weight using EFFECTIVE quantities (metal net of overflow; energy
 // net of overflow and converter draw, which needs no BP). Scale-invariant:
 // shares live on a 2-simplex where (1/3, 1/3, 1/3) = perfectly on-ratio.
 const RATIO_LEGS = `
-      COALESCE(bp.bp_total, 0) / 200.0 AS leg_b,
+      COALESCE(used.bp_applied, 0) / 200.0 AS leg_b,
       GREATEST(tf.m_income - tf.m_excess, 0) / 5.0 AS leg_m,
       GREATEST(tf.e_income - tf.e_excess - COALESCE(conv.conv_use, 0), 0) / 100.0 AS leg_e`;
 
@@ -206,11 +208,23 @@ function ratioMetric(id: string, label: string, expr: string): Metric {
   return {
     id, label, unit: "fraction", grain: "player", kind: "derived",
     sql: `${OBP_CTES},
+      used AS (
+        SELECT f.frame, f.teamId, COALESCE(SUM(f.applied), 0) AS bp_applied
+        FROM (
+          SELECT uf.frame, uf.teamId,
+                 (uf.buildProgress - LAG(uf.buildProgress)
+                    OVER (PARTITION BY uf.unitId ORDER BY uf.frame)) * sd.buildTime * 30 AS applied
+          FROM unit_frames uf
+          JOIN units u ON u.unitId = uf.unitId
+          JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+          WHERE uf.beingBuilt = 1) f
+        WHERE f.applied > 0
+        GROUP BY f.frame, f.teamId),
       legs AS (
         SELECT tf.frame, tf.teamId, ${RATIO_LEGS}
         FROM team_frames tf
         JOIN alive a ON a.teamId = tf.teamId
-        LEFT JOIN bp ON bp.frame = tf.frame AND bp.teamId = tf.teamId
+        LEFT JOIN used ON used.frame = tf.frame AND used.teamId = tf.teamId
         LEFT JOIN conv ON conv.frame = tf.frame AND conv.teamId = tf.teamId
         WHERE tf.frame <= a.lastf)
       SELECT frame, teamId AS key,
