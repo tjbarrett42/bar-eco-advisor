@@ -13,6 +13,7 @@ export type StaticDef = {
 
 // A small catalog covering every role the metrics classify.
 export const STATIC_DEFS: StaticDef[] = [
+  { unitDefName: "armcom",   metalCost: 2700, energyCost: 26000, buildTime: 75000, buildPower: 300, extractsMetal: 0, metalMake: 2, energyMake: 30, isImmobile: 0, tier: "T1" },
   { unitDefName: "armmex",   metalCost: 50,   energyCost: 500,  buildTime: 1800,  buildPower: 0,   extractsMetal: 1, metalMake: 0, energyMake: 0,  isImmobile: 1, tier: "T1" },
   { unitDefName: "armsolar", metalCost: 155,  energyCost: 0,    buildTime: 2800,  buildPower: 0,   extractsMetal: 0, metalMake: 0, energyMake: 20, isImmobile: 1, tier: "T1" },
   { unitDefName: "armwin",   metalCost: 37,   energyCost: 175,  buildTime: 1300,  buildPower: 0,   extractsMetal: 0, metalMake: 0, energyMake: 12, isImmobile: 1, tier: "T1" },

@@ -95,7 +95,8 @@ const OBP_CTES = `
     SELECT uf.frame, uf.teamId,
            -- currentBuildPower is a 0-1 fraction of the unit's workertime,
            -- so utilization weights it by the unit's actual build power
-           SUM(uf.currentBuildPower * sd.buildPower) / NULLIF(SUM(sd.buildPower), 0) AS util
+           SUM(uf.currentBuildPower * sd.buildPower) / NULLIF(SUM(sd.buildPower), 0) AS util,
+           SUM(sd.buildPower) AS bp_total
     FROM unit_frames uf
     JOIN units u ON u.unitId = uf.unitId
     JOIN static_defs sd ON sd.unitDefName = u.unitDefName
@@ -105,8 +106,13 @@ const OBP_CTES = `
 // idle-BP violation: build power mostly idle while metal piles in the bank
 const IDLE_BP = `(COALESCE(bp.util, 1) < 0.35 AND tf.m_current > 0.25 * tf.m_storage)`;
 
+// capacity violation: not enough build power to spend metal income at the
+// guide density (200 BP per 5 m/s, i.e. 40 BP per m/s; energy term omitted —
+// converter draw needs no BP and mm_use isn't captured yet)
+const BP_CAPACITY = `(COALESCE(bp.bp_total, 0) < 40 * tf.m_income)`;
+
 REGISTRY.push(
-  { id: "obp", label: "On-base % (v2: alive-gated + idle-BP)", unit: "fraction",
+  { id: "obp", label: "On-base % (v3: alive-gated, idle-BP, BP capacity)", unit: "fraction",
     grain: "player", kind: "derived",
     // Cumulative fraction of ALIVE frames where all five fundamentals hold: no
     // metal/energy stall, no metal/energy overflow, and no idle build power
@@ -118,6 +124,7 @@ REGISTRY.push(
                        AND tf.m_excess <= 0.1
                        AND tf.e_excess <= 0.1
                        AND NOT ${IDLE_BP}
+                       AND NOT ${BP_CAPACITY}
                       THEN 1.0 ELSE 0.0 END)
                OVER (PARTITION BY tf.teamId ORDER BY tf.frame
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
@@ -155,6 +162,7 @@ REGISTRY.push(
   obpLeak("obp_waste_m", "OBP leak: metal overflow", "tf.m_excess > 0.1"),
   obpLeak("obp_waste_e", "OBP leak: energy overflow", "tf.e_excess > 0.1"),
   obpLeak("obp_idle_bp", "OBP leak: idle build power", IDLE_BP),
+  obpLeak("obp_bp_capacity", "OBP leak: BP under guide ratio", BP_CAPACITY),
 );
 
 // Map metal ownership: extraction income per player, split by tier so T2

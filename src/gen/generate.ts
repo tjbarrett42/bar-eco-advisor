@@ -68,6 +68,17 @@ export async function generateStore(destDir: string, opts: GenOpts = {}): Promis
   const unitRows: Record<string, number | string>[] = [];
   const ufRows: Record<string, number | string>[] = [];
   let unitId = 1000;
+  // every team starts with a commander: alive from frame 0, 300 BP, never built
+  for (const teamId of teamIds) {
+    unitRows.push({ game_id: GAME_ID, unitId, unitDefName: "armcom",
+      teamId, allyTeam: teamAlly[teamId], bornFrame: 0 });
+    for (let f = 0; f < frames; f++) {
+      ufRows.push({ game_id: GAME_ID, frame: f, unitId, teamId,
+        buildProgress: 1, currentBuildPower: 0.8, isActive: 1, beingBuilt: 0,
+        metalMake: 2, metalUse: 0, energyMake: 30, energyUse: 0 });
+    }
+    unitId++;
+  }
   for (const teamId of teamIds) {
     let cursor = 5; // first build starts at frame 5
     for (const defName of BUILD_SEQUENCE) {
