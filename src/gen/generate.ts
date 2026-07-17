@@ -102,7 +102,7 @@ export async function generateStore(destDir: string, opts: GenOpts = {}): Promis
           metalMake: !beingBuilt && def.extractsMetal > 0 ? 2 : 0,
           metalUse: 0,
           energyMake: !beingBuilt ? def.energyMake : 0,
-          energyUse: 0,
+          energyUse: !beingBuilt && def.energyConvCapacity > 0 ? def.energyConvCapacity : 0,
         });
       }
       cursor = done + 2;

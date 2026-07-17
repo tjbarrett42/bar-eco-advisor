@@ -147,6 +147,10 @@
   function rowClick(r: Row): void {
     plot?.setSeries(r.idx, { show: !(plot.series[r.idx].show !== false) });
   }
+  function setAllSeries(on: boolean): void {
+    if (!plot) return;
+    for (const r of rows) plot.setSeries(r.idx, { show: on });
+  }
   function rowEnter(r: Row): void {
     plot?.setSeries(r.idx, { focus: true });
   }
@@ -176,7 +180,13 @@
     {/if}
   </div>
   <div class="legend" style="max-height: {height + 60}px">
-    <div class="time">{cursorTime ? `t = ${cursorTime}` : " "}</div>
+    <div class="time">
+      <span>{cursorTime ? `t = ${cursorTime}` : " "}</span>
+      <span>
+        <button class="mini" on:click={() => setAllSeries(true)}>all</button>
+        <button class="mini" on:click={() => setAllSeries(false)}>none</button>
+      </span>
+    </div>
     {#each rows as r (r.idx)}
       <button
         class="row" class:hidden-series={!r.show} class:focused={r.focused}
@@ -213,7 +223,8 @@
     font-size: 0.78rem; font-variant-numeric: tabular-nums;
     border-left: 1px solid #ddd; padding-left: 0.4rem;
   }
-  .time { color: #888; min-height: 1.1em; margin-bottom: 0.2rem; }
+  .time { color: #888; min-height: 1.1em; margin-bottom: 0.2rem; display: flex; justify-content: space-between; }
+  .mini { font-size: 0.68rem; padding: 0 0.3rem; }
   .row {
     display: flex; align-items: center; gap: 0.35rem;
     width: 100%; padding: 0.08rem 0.15rem; border: 0; background: none;

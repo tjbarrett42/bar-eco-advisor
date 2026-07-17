@@ -185,6 +185,27 @@ REGISTRY.push(
   extraction("extraction_t2", "T2", "Map metal extracted (T2 moho)"),
 );
 
+// Reconstructed converter telemetry for captures that predate the mm_* params:
+// converters are units with energyConvCapacity > 0; their per-frame energyUse
+// is the actual conversion draw (native mm_use, when captured, is authoritative).
+function convRec(id: string, expr: string, label: string): Metric {
+  return {
+    id, label, unit: "energy/s", grain: "player", kind: "derived",
+    sql: `
+      SELECT uf.frame, uf.teamId AS key, ${expr} AS value
+      FROM unit_frames uf
+      JOIN units u ON u.unitId = uf.unitId
+      JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+      WHERE sd.energyConvCapacity > 0 AND uf.beingBuilt = 0
+      GROUP BY uf.frame, uf.teamId`,
+  };
+}
+
+REGISTRY.push(
+  convRec("mm_use_rec", "SUM(uf.energyUse)", "Energy converted (reconstructed)"),
+  convRec("mm_capacity_rec", "SUM(sd.energyConvCapacity)", "Converter capacity (reconstructed)"),
+);
+
 export function getMetric(id: string): Metric | undefined {
   return REGISTRY.find((m) => m.id === id);
 }
