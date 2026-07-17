@@ -18,6 +18,10 @@
                value: string; show: boolean; focused: boolean };
   let rows: Row[] = [];
   let cursorTime = "";
+  let focusedIdx: number | null = null;
+
+  type TipEntry = { color: string; label: string; value: string; unit: string; focused: boolean };
+  let tip = { show: false, x: 0, y: 0, time: "", entries: [] as TipEntry[], more: 0 };
 
   function shade(hex: string, factor: number): string {
     const n = parseInt(hex.slice(1), 16);
@@ -61,6 +65,34 @@
       const v = u.data[r.idx][ci] as number | null;
       return { ...r, value: v == null ? "–" : fmtVal(v) };
     });
+
+    // floating tooltip: focused series first, then largest values at this x
+    if (ci == null || u.cursor.left == null || u.cursor.left < 0) {
+      tip = { ...tip, show: false };
+      return;
+    }
+    const entries: (TipEntry & { num: number })[] = [];
+    for (const r of rows) {
+      if (u.series[r.idx].show === false) continue;
+      const v = u.data[r.idx][ci] as number | null;
+      if (v == null) continue;
+      entries.push({ color: r.color, label: `${r.player} · ${r.metric}`, value: fmtVal(v),
+                     unit: r.unit, focused: focusedIdx === r.idx, num: v });
+    }
+    entries.sort((a, b) => Number(b.focused) - Number(a.focused) || b.num - a.num);
+    const cap = focusedIdx != null ? 1 : 8;
+    const overRect = u.over.getBoundingClientRect();
+    const wrapRect = el.getBoundingClientRect();
+    const rawX = overRect.left - wrapRect.left + (u.cursor.left ?? 0);
+    const plotW = overRect.width;
+    tip = {
+      show: entries.length > 0,
+      x: (u.cursor.left ?? 0) > plotW - 230 ? rawX - 225 : rawX + 14,
+      y: Math.max(0, overRect.top - wrapRect.top + (u.cursor.top ?? 0) - 10),
+      time: cursorTime,
+      entries: entries.slice(0, cap),
+      more: Math.max(0, entries.length - cap),
+    };
   }
 
   function render(): void {
@@ -73,8 +105,8 @@
     const opts: uPlot.Options = {
       title, width: Math.max(320, (el.clientWidth || 640) - LEGEND_W), height,
       legend: { show: false },
-      focus: { alpha: 0.15 },
-      cursor: { focus: { prox: 24 } },
+      focus: { alpha: 0.07 },
+      cursor: { focus: { prox: 28 } },
       scales: { x: { time: false } },
       axes: [
         { values: (_u: uPlot, vals: number[]) => vals.map(fmtClock) },
@@ -92,6 +124,7 @@
       hooks: {
         setCursor: [syncCursor],
         setSeries: [(u: uPlot, i: number | null) => {
+          focusedIdx = i; // uPlot fires setSeries(i) on focus, (null) on unfocus
           rows = rows.map((r) => ({
             ...r,
             show: u.series[r.idx].show !== false,
@@ -127,7 +160,21 @@
 </script>
 
 <div class="wrap">
-  <div bind:this={el} class="chart"></div>
+  <div bind:this={el} class="chart">
+    {#if tip.show}
+      <div class="tip" style="left:{tip.x}px; top:{tip.y}px">
+        <div class="tip-time">t = {tip.time}</div>
+        {#each tip.entries as e}
+          <div class="tip-row" class:tip-focused={e.focused}>
+            <span class="swatch" style="background:{e.color}"></span>
+            <span class="tip-lbl">{e.label}</span>
+            <span class="tip-val">{e.value} <em>{e.unit}</em></span>
+          </div>
+        {/each}
+        {#if tip.more > 0}<div class="tip-more">+{tip.more} more…</div>{/if}
+      </div>
+    {/if}
+  </div>
   <div class="legend" style="max-height: {height + 60}px">
     <div class="time">{cursorTime ? `t = ${cursorTime}` : " "}</div>
     {#each rows as r (r.idx)}
@@ -146,7 +193,20 @@
 
 <style>
   .wrap { display: flex; align-items: flex-start; gap: 0.5rem; }
-  .chart { flex: 1; min-width: 0; }
+  .chart { flex: 1; min-width: 0; position: relative; }
+  .tip {
+    position: absolute; z-index: 10; pointer-events: none;
+    background: rgba(255, 255, 255, 0.96); border: 1px solid #ccc; border-radius: 4px;
+    padding: 0.3rem 0.45rem; font-size: 0.75rem; font-variant-numeric: tabular-nums;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); max-width: 230px;
+  }
+  .tip-time { color: #888; margin-bottom: 0.15rem; }
+  .tip-row { display: flex; align-items: center; gap: 0.3rem; }
+  .tip-row.tip-focused { font-weight: 700; }
+  .tip-lbl { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12ch; }
+  .tip-val { text-align: right; white-space: nowrap; }
+  .tip-val em { color: #888; font-style: normal; font-size: 0.68rem; }
+  .tip-more { color: #888; font-size: 0.7rem; }
   .legend {
     flex: 0 0 270px; width: 270px;
     overflow-y: auto; overflow-x: hidden;
