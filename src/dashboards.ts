@@ -10,4 +10,8 @@ export const DASHBOARDS: DashboardPanel[] = [
     note: "Beta: resource-fundamentals subset (no stall, no overflow). Com/factory idleness, spot claims, and intel freshness pending real data + map inputs." },
   { title: "OBP Breakdown", metricIds: ["obp", "obp_stall_m", "obp_stall_e", "obp_waste_m", "obp_waste_e"],
     note: "obp = fraction of frames with all fundamentals held; the four leak curves are cumulative violation fractions per component (best viewed one player at a time)." },
+  { title: "Survival & Income", metricIds: ["units_alive", "m_income"],
+    note: "units_alive doubles as the death detector — a series that flatlines to zero (or ends early) marks elimination; raw OBP counts dead frames as clean, so read OBP against this." },
+  { title: "Sharing", metricIds: ["m_sent", "m_received", "e_sent"],
+    note: "Cumulative resource transfers — the team-game 'feeder' economy (front players and leavers funnel metal to carries)." },
 ];

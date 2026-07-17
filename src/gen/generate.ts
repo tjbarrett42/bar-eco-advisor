@@ -35,6 +35,7 @@ function teamFrameRow(teamId: number, allyTeam: number, frame: number): Record<s
     m_pull: mPull, m_storage: 1000, m_excess: 0,
     e_current: 400, e_income: eInc, e_expense: eInc - eExcess,
     e_pull: eInc, e_storage: 1000, e_excess: Math.max(0, eExcess - mmUse),
+    m_sent: 0, m_received: 0, e_sent: 0, e_received: 0,
     mm_level: 0.75, mm_capacity: mmCap, mm_use: mmUse,
     mm_avg_effi: mmUse > 0 ? 1 / 70 : 0,
     overdrive_metal: t * 0.05, grid_energy: eInc,

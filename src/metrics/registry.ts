@@ -30,6 +30,10 @@ export const REGISTRY: Metric[] = [
   rawTeam("mm_capacity", "Converter capacity", "energy/s"),
   rawTeam("mm_use", "Energy converted", "energy/s"),
   rawTeam("mm_avg_effi", "Converter avg efficiency", "metal/energy"),
+  rawTeam("m_sent", "Metal sent (cum.)", "metal"),
+  rawTeam("m_received", "Metal received (cum.)", "metal"),
+  rawTeam("e_sent", "Energy sent (cum.)", "energy"),
+  rawTeam("e_received", "Energy received (cum.)", "energy"),
   rawTeam("overdrive_metal", "Overdrive metal", "metal/s"),
   rawTeam("metalProduced", "Cumulative metal produced", "metal"),
   rawTeam("energyProduced", "Cumulative energy produced", "energy"),
@@ -94,6 +98,12 @@ REGISTRY.push(
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
       FROM team_frames` },
 );
+
+REGISTRY.push({
+  id: "units_alive", label: "Units alive", unit: "count", grain: "player", kind: "derived",
+  // also the de-facto death detector: a team's series ends at its last living unit
+  sql: `SELECT frame, teamId AS key, COUNT(*) AS value FROM unit_frames GROUP BY frame, teamId`,
+});
 
 // One OBP leak component: cumulative fraction of frames VIOLATING `cond`.
 function obpLeak(id: string, label: string, cond: string): Metric {

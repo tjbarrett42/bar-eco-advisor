@@ -32,6 +32,12 @@
     return `${m}:${String(sec).padStart(2, "0")}`;
   }
 
+  function fmtVal(v: number): string {
+    if (Math.abs(v) >= 1000) return v.toFixed(0);
+    if (Math.abs(v) >= 10) return v.toFixed(1);
+    return v.toFixed(3);
+  }
+
   function render(): void {
     plot?.destroy();
     if (series.length === 0) return;
@@ -48,11 +54,13 @@
         })),
       ],
       series: [
-        { label: "time" },
+        { label: "time", value: (_u: uPlot, v: number | null) => (v == null ? "–" : fmtClock(v)) },
         ...series.map((s, i) => ({
           label: `${s.metricId} · ${labels[s.key] ?? `t${s.key}`}`,
           stroke: COLORS[i % COLORS.length], width: 1.5,
           scale: s.unit,
+          // hover shows value with its measurement unit
+          value: (_u: uPlot, v: number | null) => (v == null ? "–" : `${fmtVal(v)} ${s.unit}`),
           // each series is downsampled on its own frame grid, so the union
           // x-axis leaves alignment holes — span them instead of drawing gaps
           spanGaps: true,
@@ -67,4 +75,20 @@
   $: if (el) { series; labels; render(); }
 </script>
 
-<div bind:this={el}></div>
+<div bind:this={el} class="chart"></div>
+
+<style>
+  /* keep the uPlot legend from jumping as hover values change width */
+  .chart :global(.u-legend) {
+    font-variant-numeric: tabular-nums;
+    table-layout: fixed;
+  }
+  .chart :global(.u-legend .u-value) {
+    display: inline-block;
+    min-width: 11ch;
+    text-align: right;
+  }
+  .chart :global(.u-legend .u-label) {
+    white-space: nowrap;
+  }
+</style>
