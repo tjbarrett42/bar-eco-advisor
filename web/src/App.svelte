@@ -40,6 +40,13 @@
     // keep selection ordered by side, then team
     keys = teams.map((t) => t.teamId).filter((id) => next.has(id));
   }
+
+  function setAll(ids: number[], on: boolean) {
+    const next = new Set(keys);
+    for (const id of ids) (on ? next.add(id) : next.delete(id));
+    keys = teams.map((t) => t.teamId).filter((id) => next.has(id));
+  }
+  $: sideIds = (s: number) => teams.filter((t) => t.allyTeam === s).map((t) => t.teamId);
 </script>
 
 <header>
@@ -57,7 +64,12 @@
 
 {#if tab === "dashboard"}
   <fieldset class="players">
-    <legend>Players</legend>
+    <legend>Players
+      <button class="mini" on:click={() => setAll(teams.map((t) => t.teamId), true)}>all</button>
+      <button class="mini" on:click={() => setAll(teams.map((t) => t.teamId), false)}>none</button>
+      <button class="mini s0" on:click={() => setAll(sideIds(0), keys.filter((k) => sideIds(0).includes(k)).length === 0)}>side 0</button>
+      <button class="mini s1" on:click={() => setAll(sideIds(1), keys.filter((k) => sideIds(1).includes(k)).length === 0)}>side 1</button>
+    </legend>
     {#each teams as t (t.teamId)}
       <label class="chip" class:side1={t.allyTeam === 1}>
         <input type="checkbox" checked={keys.includes(t.teamId)} on:change={() => toggle(t.teamId)} />
@@ -77,6 +89,9 @@
   .players { display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; margin-bottom: 0.75rem; border: 1px solid #ccc; }
   .chip { white-space: nowrap; }
   .chip .side { font-size: 0.7rem; color: #888; margin-left: 0.2rem; }
+  .mini { font-size: 0.7rem; padding: 0.1rem 0.4rem; margin-left: 0.3rem; }
+  .mini.s0 { border-left: 3px solid #4e79a7; }
+  .mini.s1 { border-left: 3px solid #f28e2b; }
   .chip.side1 { border-left: 3px solid #f28e2b; padding-left: 0.3rem; }
   .chip:not(.side1) { border-left: 3px solid #4e79a7; padding-left: 0.3rem; }
 </style>
