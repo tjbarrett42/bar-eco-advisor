@@ -5,7 +5,7 @@ describe("registry", () => {
   it("has unique ids and required raw metrics", () => {
     const ids = REGISTRY.map((m) => m.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const id of ["m_income", "e_income", "m_excess", "e_excess", "mm_use", "mm_level", "m_sent", "m_received", "e_sent", "units_alive"])
+    for (const id of ["m_income", "e_income", "m_excess", "e_excess", "mm_use", "mm_level", "m_sent", "m_received", "e_sent", "units_alive", "obp_idle_bp", "extraction_t1", "extraction_t2"])
       expect(ids).toContain(id);
   });
 

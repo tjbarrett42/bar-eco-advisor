@@ -10,8 +10,25 @@
 
   let el: HTMLDivElement;
   let plot: uPlot | undefined;
+  const LEGEND_W = 250;
   const COLORS = ["#4e79a7", "#f28e2b", "#59a14f", "#e15759", "#76b7b2", "#edc948",
                   "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"];
+
+  function shade(hex: string, factor: number): string {
+    const n = parseInt(hex.slice(1), 16);
+    const f = (c: number) => Math.round(c * factor);
+    return `rgb(${f(n >> 16)}, ${f((n >> 8) & 255)}, ${f(n & 255)})`;
+  }
+
+  // one hue per player key; each additional metric for the same key gets a
+  // darker shade of that hue (e.g. T1 mex vs T2 moho extraction)
+  function colorFor(s: Series, i: number): string {
+    const keys = Array.from(new Set(series.map((x) => x.key)));
+    const base = COLORS[keys.indexOf(s.key) % COLORS.length];
+    const metricIdx = Array.from(new Set(series.filter((x) => x.key === s.key).map((x) => x.metricId)))
+      .indexOf(s.metricId);
+    return metricIdx > 0 ? shade(base, Math.max(0.35, 1 - 0.3 * metricIdx)) : base;
+  }
 
   function toData(): uPlot.AlignedData {
     // union of all frames across series, then value-per-series aligned to it
@@ -44,7 +61,7 @@
     // one y-scale per measurement unit; first unit gets the left axis, second the right
     const units = Array.from(new Set(series.map((s) => s.unit)));
     const opts: uPlot.Options = {
-      title, width: el.clientWidth || 640, height,
+      title, width: Math.max(320, (el.clientWidth || 640) - LEGEND_W), height,
       scales: { x: { time: false } },
       axes: [
         { values: (_u: uPlot, vals: number[]) => vals.map(fmtClock) },
@@ -57,7 +74,7 @@
         { label: "time", value: (_u: uPlot, v: number | null) => (v == null ? "–" : fmtClock(v)) },
         ...series.map((s, i) => ({
           label: `${s.metricId} · ${labels[s.key] ?? `t${s.key}`}`,
-          stroke: COLORS[i % COLORS.length], width: 1.5,
+          stroke: colorFor(s, i), width: 1.5,
           scale: s.unit,
           // hover shows value with its measurement unit
           value: (_u: uPlot, v: number | null) => (v == null ? "–" : `${fmtVal(v)} ${s.unit}`),
@@ -78,10 +95,23 @@
 <div bind:this={el} class="chart"></div>
 
 <style>
-  /* keep the uPlot legend from jumping as hover values change width */
+  /* legend lives in a fixed right-hand column and never reflows the plot */
+  .chart :global(.uplot) {
+    display: flex;
+    align-items: flex-start;
+  }
   .chart :global(.u-legend) {
+    width: 250px;
+    flex: 0 0 250px;
     font-variant-numeric: tabular-nums;
-    table-layout: fixed;
+    text-align: left;
+    max-height: 480px;
+    overflow-y: auto;
+  }
+  .chart :global(.u-legend tr) {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
   }
   .chart :global(.u-legend .u-value) {
     display: inline-block;
@@ -90,5 +120,8 @@
   }
   .chart :global(.u-legend .u-label) {
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 15ch;
   }
 </style>

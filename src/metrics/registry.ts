@@ -73,30 +73,58 @@ REGISTRY.push(
     grain: "player", kind: "derived",
     sql: `
       SELECT uf.frame, uf.teamId AS key,
-             SUM(uf.currentBuildPower) / NULLIF(SUM(sd.buildPower), 0) AS value
+             SUM(uf.currentBuildPower * sd.buildPower) / NULLIF(SUM(sd.buildPower), 0) AS value
       FROM unit_frames uf
       JOIN units u ON u.unitId = uf.unitId
       JOIN static_defs sd ON sd.unitDefName = u.unitDefName
-      WHERE sd.buildPower > 0
+      WHERE sd.buildPower > 0 AND uf.beingBuilt = 0
       GROUP BY uf.frame, uf.teamId` },
   allocMetric("eco", "Metal → economy"),
   allocMetric("bp", "Metal → build power"),
   allocMetric("army", "Metal → army"),
   allocMetric("defense", "Metal → defense"),
-  { id: "obp", label: "On-base % (resource fundamentals)", unit: "fraction",
+);
+
+// Shared CTEs for OBP v2: alive gate (frames after a team's last living unit
+// are dead time, not clean fundamentals) and per-frame build-power utilization
+// (only completed, currently-alive builders count toward available BP —
+// unit_frames rows exist only while a unit lives, so dead builders drop out).
+const OBP_CTES = `
+  WITH alive AS (SELECT teamId, MAX(frame) AS lastf FROM unit_frames GROUP BY teamId),
+  bp AS (
+    SELECT uf.frame, uf.teamId,
+           -- currentBuildPower is a 0-1 fraction of the unit's workertime,
+           -- so utilization weights it by the unit's actual build power
+           SUM(uf.currentBuildPower * sd.buildPower) / NULLIF(SUM(sd.buildPower), 0) AS util
+    FROM unit_frames uf
+    JOIN units u ON u.unitId = uf.unitId
+    JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+    WHERE sd.buildPower > 0 AND uf.beingBuilt = 0
+    GROUP BY uf.frame, uf.teamId)`;
+
+// idle-BP violation: build power mostly idle while metal piles in the bank
+const IDLE_BP = `(COALESCE(bp.util, 1) < 0.35 AND tf.m_current > 0.25 * tf.m_storage)`;
+
+REGISTRY.push(
+  { id: "obp", label: "On-base % (v2: alive-gated + idle-BP)", unit: "fraction",
     grain: "player", kind: "derived",
-    // Cumulative fraction of frames where all four resource fundamentals hold:
-    // no metal stall, no energy stall, no metal overflow, no energy overflow.
-    sql: `
-      SELECT frame, teamId AS key,
-             AVG(CASE WHEN (m_pull - m_expense) <= 0.1
-                       AND (e_pull - e_expense) <= 0.1
-                       AND m_excess <= 0.1
-                       AND e_excess <= 0.1
+    // Cumulative fraction of ALIVE frames where all five fundamentals hold: no
+    // metal/energy stall, no metal/energy overflow, and no idle build power
+    // while metal banks up.
+    sql: `${OBP_CTES}
+      SELECT tf.frame, tf.teamId AS key,
+             AVG(CASE WHEN (tf.m_pull - tf.m_expense) <= 0.1
+                       AND (tf.e_pull - tf.e_expense) <= 0.1
+                       AND tf.m_excess <= 0.1
+                       AND tf.e_excess <= 0.1
+                       AND NOT ${IDLE_BP}
                       THEN 1.0 ELSE 0.0 END)
-               OVER (PARTITION BY teamId ORDER BY frame
+               OVER (PARTITION BY tf.teamId ORDER BY tf.frame
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
-      FROM team_frames` },
+      FROM team_frames tf
+      JOIN alive a ON a.teamId = tf.teamId
+      LEFT JOIN bp ON bp.frame = tf.frame AND bp.teamId = tf.teamId
+      WHERE tf.frame <= a.lastf` },
 );
 
 REGISTRY.push({
@@ -105,24 +133,48 @@ REGISTRY.push({
   sql: `SELECT frame, teamId AS key, COUNT(*) AS value FROM unit_frames GROUP BY frame, teamId`,
 });
 
-// One OBP leak component: cumulative fraction of frames VIOLATING `cond`.
+// One OBP leak component: cumulative fraction of ALIVE frames VIOLATING `cond`.
 function obpLeak(id: string, label: string, cond: string): Metric {
   return {
     id, label, unit: "fraction", grain: "player", kind: "derived",
-    sql: `
-      SELECT frame, teamId AS key,
+    sql: `${OBP_CTES}
+      SELECT tf.frame, tf.teamId AS key,
              AVG(CASE WHEN ${cond} THEN 1.0 ELSE 0.0 END)
-               OVER (PARTITION BY teamId ORDER BY frame
+               OVER (PARTITION BY tf.teamId ORDER BY tf.frame
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS value
-      FROM team_frames`,
+      FROM team_frames tf
+      JOIN alive a ON a.teamId = tf.teamId
+      LEFT JOIN bp ON bp.frame = tf.frame AND bp.teamId = tf.teamId
+      WHERE tf.frame <= a.lastf`,
   };
 }
 
 REGISTRY.push(
-  obpLeak("obp_stall_m", "OBP leak: metal stall", "(m_pull - m_expense) > 0.1"),
-  obpLeak("obp_stall_e", "OBP leak: energy stall", "(e_pull - e_expense) > 0.1"),
-  obpLeak("obp_waste_m", "OBP leak: metal overflow", "m_excess > 0.1"),
-  obpLeak("obp_waste_e", "OBP leak: energy overflow", "e_excess > 0.1"),
+  obpLeak("obp_stall_m", "OBP leak: metal stall", "(tf.m_pull - tf.m_expense) > 0.1"),
+  obpLeak("obp_stall_e", "OBP leak: energy stall", "(tf.e_pull - tf.e_expense) > 0.1"),
+  obpLeak("obp_waste_m", "OBP leak: metal overflow", "tf.m_excess > 0.1"),
+  obpLeak("obp_waste_e", "OBP leak: energy overflow", "tf.e_excess > 0.1"),
+  obpLeak("obp_idle_bp", "OBP leak: idle build power", IDLE_BP),
+);
+
+// Map metal ownership: extraction income per player, split by tier so T2
+// (mohos) can render as a darker shade of the same player hue.
+function extraction(id: string, tier: string, label: string): Metric {
+  return {
+    id, label, unit: "metal/s", grain: "player", kind: "derived",
+    sql: `
+      SELECT uf.frame, uf.teamId AS key, SUM(uf.metalMake) AS value
+      FROM unit_frames uf
+      JOIN units u ON u.unitId = uf.unitId
+      JOIN static_defs sd ON sd.unitDefName = u.unitDefName
+      WHERE sd.extractsMetal > 0 AND sd.tier = '${tier}' AND uf.beingBuilt = 0
+      GROUP BY uf.frame, uf.teamId`,
+  };
+}
+
+REGISTRY.push(
+  extraction("extraction_t1", "T1", "Map metal extracted (T1 mex)"),
+  extraction("extraction_t2", "T2", "Map metal extracted (T2 moho)"),
 );
 
 export function getMetric(id: string): Metric | undefined {

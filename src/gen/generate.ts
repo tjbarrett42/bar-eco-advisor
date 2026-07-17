@@ -85,9 +85,13 @@ export async function generateStore(destDir: string, opts: GenOpts = {}): Promis
         ufRows.push({
           game_id: GAME_ID, frame: f, unitId, teamId,
           buildProgress: Number(progress.toFixed(4)),
-          currentBuildPower: beingBuilt ? 100 : 0,
+          currentBuildPower: beingBuilt ? 1 : 0,
           isActive: beingBuilt ? 0 : 1,
           beingBuilt,
+          metalMake: !beingBuilt && def.extractsMetal > 0 ? 2 : 0,
+          metalUse: 0,
+          energyMake: !beingBuilt ? def.energyMake : 0,
+          energyUse: 0,
         });
       }
       cursor = done + 2;
